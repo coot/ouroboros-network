@@ -158,7 +158,7 @@ data RunNodeArgs m addrNTN addrNTC blk (p2p :: Diffusion.P2P) = RunNodeArgs {
     , rnTraceNTC :: NTC.Tracers m (ConnectionId addrNTC) blk DeserialiseFailure
 
       -- | Protocol info
-    , rnProtocolInfo :: ProtocolInfo m blk
+    , rnProtocolInfo :: ProtocolInfo blk
 
       -- | Hook called after the initialisation of the 'NodeKernel'
       --
@@ -339,7 +339,6 @@ runWith RunNodeArgs{..} LowLevelRunNodeArgs{..} =
               llrnBfcSalt
               llrnKeepAliveRng
               cfg
-              blockForging
               rnTraceConsensus
               btime
               chainDB
@@ -362,7 +361,6 @@ runWith RunNodeArgs{..} LowLevelRunNodeArgs{..} =
     ProtocolInfo
       { pInfoConfig       = cfg
       , pInfoInitLedger   = initLedger
-      , pInfoBlockForging = blockForging
       } = rnProtocolInfo
 
     codecConfig :: CodecConfig blk
@@ -569,7 +567,6 @@ mkNodeKernelArgs
   -> Int
   -> StdGen
   -> TopLevelConfig blk
-  -> m [BlockForging m blk]
   -> Tracers m (ConnectionId addrNTN) (ConnectionId addrNTC) blk
   -> BlockchainTime m
   -> ChainDB m blk
@@ -579,19 +576,16 @@ mkNodeKernelArgs
   bfcSalt
   keepAliveRng
   cfg
-  initBlockForging
   tracers
   btime
   chainDB
   = do
-    blockForging <- initBlockForging
     return NodeKernelArgs
       { tracers
       , registry
       , cfg
       , btime
       , chainDB
-      , blockForging
       , initChainDB             = nodeInitChainDB
       , blockFetchSize          = estimateBlockSize
       , mempoolCapacityOverride = NoMempoolCapacityBytesOverride

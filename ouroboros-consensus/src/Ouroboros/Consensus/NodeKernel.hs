@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns          #-}
 {-# LANGUAGE ConstraintKinds       #-}
 {-# LANGUAGE DataKinds             #-}
 {-# LANGUAGE DerivingVia           #-}
@@ -30,6 +31,7 @@ import           Control.DeepSeq (force)
 import           Control.Monad
 import           Control.Monad.Except
 import           Data.Bifunctor (second)
+import           Data.Foldable (traverse_)
 import           Data.Hashable (Hashable)
 import           Data.List.NonEmpty (NonEmpty)
 import           Data.Map.Strict (Map)
@@ -37,10 +39,13 @@ import           Data.Maybe (isJust, mapMaybe)
 import           Data.Proxy
 import qualified Data.Text as Text
 import           Data.Time.Clock (UTCTime)
+import           Data.Void
 import           GHC.Stack (HasCallStack)
 import           System.Random (StdGen)
 
 import           Control.Tracer
+
+import qualified Control.Monad.Class.MonadSTM as LazySTM
 
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      AnchoredSeq (..))
@@ -115,6 +120,9 @@ data NodeKernel m remotePeer localPeer blk = NodeKernel {
 
       -- | The node's tracers
     , getTracers             :: Tracers m remotePeer localPeer blk
+
+      -- | Set block forging
+    , setBlockForging        :: [BlockForging m blk] -> m ()
     }
 
 -- | Arguments required when initializing a node
@@ -126,7 +134,6 @@ data NodeKernelArgs m remotePeer localPeer blk = NodeKernelArgs {
     , chainDB                 :: ChainDB m blk
     , initChainDB             :: StorageConfig blk -> InitChainDB m blk -> m ()
     , blockFetchSize          :: Header blk -> SizeInBytes
-    , blockForging            :: [BlockForging m blk]
     , mempoolCapacityOverride :: MempoolCapacityBytesOverride
     , miniProtocolParameters  :: MiniProtocolParameters
     , blockFetchConfiguration :: BlockFetchConfiguration
@@ -144,15 +151,19 @@ initNodeKernel
     => NodeKernelArgs m remotePeer localPeer blk
     -> m (NodeKernel m remotePeer localPeer blk)
 initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
-                                   , blockForging, chainDB, initChainDB
+                                   , chainDB, initChainDB
                                    , blockFetchConfiguration
                                    } = do
 
+    -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
+    blockForgingVar :: LazySTM.TMVar m [BlockForging m blk] <- LazySTM.newTMVarIO []
     initChainDB (configStorage cfg) (InitChainDB.fromFull chainDB)
 
     st <- initInternalState args
 
-    mapM_ (forkBlockForging st) blockForging
+    void $ forkLinkedThread registry "NodeKernel.blockForging" $
+                            blockForgingController st (LazySTM.takeTMVar blockForgingVar)
+
 
     let IS { blockFetchInterface, fetchClientRegistry, varCandidates,
              mempool } = st
@@ -175,7 +186,20 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
       , getFetchMode           = readFetchMode blockFetchInterface
       , getNodeCandidates      = varCandidates
       , getTracers             = tracers
+      , setBlockForging        = \a -> atomically . LazySTM.putTMVar blockForgingVar $! a
       }
+  where
+    blockForgingController :: InternalState m remotePeer localPeer blk
+                           -> STM m [BlockForging m blk]
+                           -> m Void
+    blockForgingController st getBlockForging = go []
+      where
+        go :: [Thread m Void] -> m Void
+        go !forgingThreads = do
+          blockForging <- atomically getBlockForging
+          traverse_ cancelThread forgingThreads
+          blockForging' <- traverse (forkBlockForging st) blockForging
+          go blockForging'
 
 {-------------------------------------------------------------------------------
   Internal node components
@@ -459,10 +483,9 @@ forkBlockForging
        (IOLike m, RunNode blk)
     => InternalState m remotePeer localPeer blk
     -> BlockForging m blk
-    -> m ()
+    -> m (Thread m Void)
 forkBlockForging IS{..} blockForging =
-      void
-    $ forkLinkedWatcher registry threadLabel
+      forkLinkedWatcher registry threadLabel
     $ knownSlotWatcher btime
     $ withEarlyExit_ . go
   where
