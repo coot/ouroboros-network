@@ -495,7 +495,9 @@ protocolInfoCardano ::
   -> ProtocolTransitionParamsShelleyBased (MaryEra c)
   -> ProtocolTransitionParamsShelleyBased (AlonzoEra c)
   -> ProtocolTransitionParamsShelleyBased (BabbageEra c)
-  -> ProtocolInfo m (CardanoBlock c)
+  -> ( ProtocolInfo      (CardanoBlock c)
+     , m [BlockForging m (CardanoBlock c)]
+     )
 protocolInfoCardano protocolParamsByron@ProtocolParamsByron {
                         byronGenesis                = genesisByron
                       , byronLeaderCredentials      = mCredsByron
@@ -550,12 +552,13 @@ protocolInfoCardano protocolParamsByron@ProtocolParamsByron {
   , length credssShelleyBased > 1
   = error "Multiple Shelley-based credentials not allowed for mainnet"
   | otherwise
-  = assertWithMsg (validateGenesis genesisShelley) $
-    ProtocolInfo {
+  = assertWithMsg (validateGenesis genesisShelley)
+    ( ProtocolInfo {
         pInfoConfig       = cfg
       , pInfoInitLedger   = initExtLedgerStateCardano
-      , pInfoBlockForging = blockForging
       }
+    , blockForging
+    )
   where
     -- The major protocol version of the last era is the maximum major protocol
     -- version we support.
@@ -571,7 +574,7 @@ protocolInfoCardano protocolParamsByron@ProtocolParamsByron {
           , topLevelConfigBlock    = blockConfigByron
           }
       , pInfoInitLedger = initExtLedgerStateByron
-      } = protocolInfoByron @m protocolParamsByron
+      } = protocolInfoByron protocolParamsByron
 
     partialConsensusConfigByron :: PartialConsensusConfig (BlockProtocol ByronBlock)
     partialConsensusConfigByron = consensusConfigByron
