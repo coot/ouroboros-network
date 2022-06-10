@@ -15,6 +15,7 @@ packages: ./ouroboros-network-testing
           ./ouroboros-consensus-mock
           ./ouroboros-consensus-mock-test
           ./ouroboros-consensus-protocol
+          ./ouroboros-consensus-protocol-test
           ./ouroboros-consensus-shelley
           ./ouroboros-consensus-shelley-test
           ./ouroboros-consensus-test
