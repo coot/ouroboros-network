@@ -33,6 +33,7 @@ import           Data.Foldable (toList)
 import           Data.Functor.Classes (Eq1, Show1)
 import           Data.Functor.Identity (Identity)
 import           Data.List (sortOn)
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
 import           Data.Maybe (fromMaybe)
 import           Data.Ord (Down (..))
@@ -77,8 +78,10 @@ import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.BFT
+import           Ouroboros.Consensus.Util (split)
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.Condense (condense)
+import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike hiding (invariant)
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (Fingerprint (..),
@@ -1527,7 +1530,7 @@ prop_sequential maxClockSkew (SmallChunkInfo chunkInfo) =
             tabulate "Chain length" [show (Chain.length modelChain)]     $
             tabulate "TraceEvents" (map traceEventName trace)            $
             res === Ok .&&.
-            prop_trace trace .&&.
+            prop_trace testCfg (dbModel model) trace .&&.
             counterexample "ImmutableDB is leaking file handles"
                            (Mock.numOpenHandles (nodeDBsImm fses) === 0) .&&.
             counterexample "VolatileDB is leaking file handles"
@@ -1538,8 +1541,10 @@ prop_sequential maxClockSkew (SmallChunkInfo chunkInfo) =
                            (remainingCleanups === 0)
       return (hist, prop)
 
-prop_trace :: [TraceEvent Blk] -> Property
-prop_trace trace = invalidBlockNeverValidatedAgain
+prop_trace :: TopLevelConfig Blk -> DBModel Blk -> [TraceEvent Blk] -> Property
+prop_trace cfg dbModel trace =
+    invalidBlockNeverValidatedAgain .&&.
+    tentativeHeaderMonotonicity
   where
     -- Whenever we validate a block that turns out to be invalid, check that
     -- we never again validate the same block.
@@ -1566,6 +1571,22 @@ prop_trace trace = invalidBlockNeverValidatedAgain
     isOpened :: TraceEvent blk -> Bool
     isOpened (TraceOpenEvent (OpenedDB {})) = True
     isOpened _                              = False
+
+    tentativeHeaderMonotonicity =
+        counterexample "Trap tentative headers did not improve monotonically" $
+        all isMonotonicallyIncreasing trapTentativeSelectViews
+      where
+        isMonotonicallyIncreasing as = and $ zipWith (<) as (drop 1 as)
+
+        trapTentativeSelectViews =
+            [ [ selectView (configBlock cfg) hdr
+              | TraceAddBlockEvent (PipeliningEvent ev) <- trace'
+              , SetTentativeHeader hdr FallingEdge <- [ev]
+              , Map.member (headerHash hdr) (Model.invalid dbModel)
+              ]
+            | -- Ignore DB reopenings
+              trace' <- NE.toList $ split isOpened trace
+            ]
 
 -- | Given a trace of events, for each event in the trace for which the
 -- predicate yields a @Just a@, call the continuation function with the
