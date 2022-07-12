@@ -75,6 +75,7 @@ library
                        Test.Util.Stream
                        Test.Util.Tasty.Traceable
                        Test.Util.TestBlock
+                       Test.Util.TestLedgerState
                        Test.Util.Time
                        Test.Util.Tracer
                        Test.Util.WithEq
@@ -236,6 +237,7 @@ test-suite test-storage
                        Test.Ouroboros.Storage.LedgerDB.DbChangelog
                        Test.Ouroboros.Storage.LedgerDB.DiskPolicy
                        Test.Ouroboros.Storage.LedgerDB.HD
+                       Test.Ouroboros.Storage.LedgerDB.HD.BackingStore
                        Test.Ouroboros.Storage.LedgerDB.HD.DiffSeq
                        Test.Ouroboros.Storage.LedgerDB.HD.LMDB
                        Test.Ouroboros.Storage.LedgerDB.InMemory
@@ -260,6 +262,7 @@ test-suite test-storage
                      , containers
                      , contra-tracer
                      , directory
+                     , exceptions
                      , generics-sop
                      , hashable
                      , mtl

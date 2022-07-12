@@ -1,12 +1,17 @@
+{-# LANGUAGE NamedFieldPuns  #-}
+{-# LANGUAGE RecordWildCards #-}
+
 -- | IO implementation of the 'HasFS' class
 module Ouroboros.Consensus.Storage.FS.IO (
     -- * IO implementation & monad
     HandleIO
   , ioHasFS
+  , monadIOHasFS
   ) where
 
 import           Control.Concurrent.MVar
 import qualified Control.Exception as E
+import           Control.Monad.IO.Class (MonadIO (..))
 import qualified Data.ByteString.Unsafe as BS
 import qualified Data.Set as Set
 import           Foreign (castPtr)
@@ -92,3 +97,31 @@ ioHasFS mount = HasFS {
 
         errorPath :: FsErrorPath
         errorPath = fsToFsErrorPath mount fp
+
+-- | Like @'ioHasFS'@, but generalised to any @'MonadIO m'@.
+monadIOHasFS :: MonadIO m => MountPoint -> HasFS m HandleIO
+monadIOHasFS mount = HasFS {
+      dumpState = liftIO dumpState
+    , hOpen = \fp openMode -> liftIO $ hOpen fp openMode
+    , hClose = liftIO . hClose
+    , hIsOpen = liftIO . hIsOpen
+    , hSeek = \h mode o -> liftIO $ hSeek h mode o
+    , hGetSome = \h n -> liftIO $ hGetSome h n
+    , hGetSomeAt = \h n o -> liftIO $ hGetSomeAt h n o
+    , hTruncate = \h sz -> liftIO $ hTruncate h sz
+    , hGetSize = liftIO . hGetSize
+    , hPutSome = \h bs -> liftIO $ hPutSome h bs
+    , createDirectory = liftIO . createDirectory
+    , listDirectory = liftIO . listDirectory
+    , doesDirectoryExist = liftIO . doesDirectoryExist
+    , doesFileExist = liftIO . doesFileExist
+    , createDirectoryIfMissing = \createParent fp ->
+        liftIO $ createDirectoryIfMissing createParent fp
+    , removeDirectoryRecursive = liftIO . removeDirectoryRecursive
+    , removeFile = liftIO . removeFile
+    , renameFile = \fp1 fp2 -> liftIO $ renameFile fp1 fp2
+    , mkFsErrorPath
+    , unsafeToFilePath = liftIO . unsafeToFilePath
+    }
+  where
+    HasFS {..} = ioHasFS mount

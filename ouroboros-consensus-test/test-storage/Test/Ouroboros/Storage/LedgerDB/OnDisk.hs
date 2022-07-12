@@ -52,7 +52,6 @@ import           Data.Maybe (fromJust, fromMaybe)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.TreeDiff.Class (genericToExpr)
-import           Data.TreeDiff.Expr (Expr (App))
 import           Data.Word
 import           GHC.Generics (Generic)
 import qualified System.Directory as Dir
@@ -349,58 +348,6 @@ instance StowableLedgerTables (LedgerState TestBlock) where
 
 stowErr :: String -> a
 stowErr fname = error $ "Function " <> fname <> " should not be used in these tests."
-
-instance Show (ApplyMapKind' mk' Token TValue) where
-  show ap = showsApplyMapKind ap ""
-
-instance ToExpr (ApplyMapKind' mk' Token TValue) where
-  toExpr ApplyEmptyMK                 = App "ApplyEmptyMK"     []
-  toExpr (ApplyDiffMK diffs)          = App "ApplyDiffMK"      [genericToExpr diffs]
-  toExpr (ApplyKeysMK keys)           = App "ApplyKeysMK"      [genericToExpr keys]
-  toExpr (ApplySeqDiffMK (DS.UnsafeDiffSeq seqdiff))
-                                      = App "ApplySeqDiffMK"   [genericToExpr $ toList seqdiff]
-  toExpr (ApplyTrackingMK vals diffs) = App "ApplyTrackingMK"  [ genericToExpr vals
-                                                               , genericToExpr diffs
-                                                               ]
-  toExpr (ApplyValuesMK vals)         = App "ApplyValuesMK"    [genericToExpr vals]
-  toExpr ApplyQueryAllMK              = App "ApplyQueryAllMK"  []
-  toExpr (ApplyQuerySomeMK keys)      = App "ApplyQuerySomeMK" [genericToExpr keys]
-
--- About this instance: we have that the use of
---
--- > genericToExpr UtxoDiff
---
--- in instance ToExpr (ApplyMapKind mk Token TValue) requires
---
--- >  ToExpr Map k (UtxoEntryDiff v )
---
--- requires
---
--- > ToExpr (UtxoEntryDiff v )
---
--- requires
---
--- > ToExpr UtxoEntryDiffState
---
-deriving anyclass instance ToExpr v => ToExpr (DS.DiffEntry v)
-deriving anyclass instance (ToExpr k, ToExpr v) => ToExpr (DS.Diff k v)
-deriving anyclass instance (ToExpr k, ToExpr v) => ToExpr (DS.Values k v)
-deriving anyclass instance (ToExpr k, ToExpr v) => ToExpr (DS.Keys k v)
-deriving anyclass instance (ToExpr k, ToExpr v) => ToExpr (DS.RootMeasure k v)
-deriving anyclass instance (ToExpr k, ToExpr v) => ToExpr (DS.InternalMeasure k v)
-deriving anyclass instance (ToExpr k, ToExpr v) => ToExpr (DS.Element k v)
-deriving anyclass instance ToExpr DS.Length
-deriving anyclass instance ToExpr DS.SlotNoUB
-deriving anyclass instance ToExpr DS.SlotNoLB
-
-instance ToExpr v => ToExpr (DS.DiffHistory v) where
-  toExpr h = App "DiffHistory" [genericToExpr . toList $ h]
-
-instance ToExpr v => ToExpr (DS.NEDiffHistory v) where
-  toExpr h = App "NEDiffHistory" [genericToExpr . toList $ h]
-
-instance ToExpr (ExtLedgerState TestBlock ValuesMK) where
-  toExpr = genericToExpr
 
 instance ToExpr (LedgerState (TestBlockWith Tx) ValuesMK) where
   toExpr = genericToExpr

@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveGeneric       #-}
 {-# LANGUAGE DerivingVia         #-}
+{-# LANGUAGE FlexibleInstances   #-}
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
@@ -20,7 +21,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.HD.LMDB (
     -- * Exported for ledger-db-backends-checker
   , DbState (..)
   , LMDBMK (..)
-  , foldrWithKey
   ) where
 
 import qualified Codec.CBOR.Decoding as CBOR
@@ -28,7 +28,7 @@ import           Codec.CBOR.Read (deserialiseFromBytes)
 import           Codec.CBOR.Write (toStrictByteString)
 import qualified Codec.Serialise as S (Serialise (..))
 import           Control.Exception (assert)
-import           Control.Monad (unless, void, when, (>=>))
+import           Control.Monad (unless, void, when)
 import qualified Control.Monad.Class.MonadSTM as IOLike
 import           Control.Monad.IO.Class (MonadIO (liftIO))
 import qualified Control.Tracer as Trace
@@ -41,7 +41,7 @@ import           Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Text as Strict
-import           Foreign (Ptr, alloca, castPtr, copyBytes, peek)
+import           Foreign (castPtr, copyBytes)
 import           GHC.Generics (Generic)
 
 import           Cardano.Slotting.Slot (SlotNo, WithOrigin (At))
@@ -57,6 +57,8 @@ import           Ouroboros.Consensus.Util.IOLike (Exception (..), IOLike,
 
 import qualified Database.LMDB.Raw as LMDB
 import qualified Database.LMDB.Simple as LMDB
+import qualified Database.LMDB.Simple.Codec as LMDB.Codec
+import qualified Database.LMDB.Simple.Cursor as LMDB.Cursor
 import qualified Database.LMDB.Simple.Extra as LMDB
 import qualified Database.LMDB.Simple.Internal as LMDB.Internal
 
@@ -270,17 +272,6 @@ put (CodecMK encKey encVal _ _) db k =
   where
     keyBS = toStrictByteString (encKey k)
 
-foldrWithKey ::
-     (k -> v -> b -> b)
-  -> b
-  -> CodecMK k v
-  -> LMDB.Database k v
-  -> LMDB.Transaction mode b
-foldrWithKey f b (CodecMK _ _ decKey decVal) = foldrWithKeyBS fBS b
-  where
-    fBS keyBS valBS =
-      f (deserialiseBS "a key" decKey keyBS) (deserialiseBS "a value" decVal valBS)
-
 -- | Deserialise a 'BS.ByteString' using the provided decoder.
 deserialiseBS ::
      String
@@ -325,19 +316,6 @@ putBS (LMDB.Internal.Db _ dbi) keyBS valueBS =  LMDB.Internal.Txn $ \txn ->
         unsafeUseAsCStringLen valueBS $
           \(bsp, lenToCopy) -> copyBytes ptr (castPtr bsp) lenToCopy
 
-foldrWithKeyBS ::
-     (BS.ByteString -> BS.ByteString -> b -> b)
-  -> b
-  -> LMDB.Database k v
-  -> LMDB.Transaction mode b
-foldrWithKeyBS f z (LMDB.Internal.Db _ dbi)  = LMDB.Internal.Txn $ \txn ->
-    alloca $ \kptr ->
-    alloca $ \vptr ->
-      LMDB.Internal.forEachForward txn dbi kptr vptr z $ \rest ->
-        f <$> peekVal' kptr <*> peekVal' vptr <*> rest
-  where
-    peekVal' :: Ptr LMDB.MDB_val -> IO BS.ByteString
-    peekVal' = peek >=> marshalInBS
 
 marshalInBS :: LMDB.MDB_val -> IO BS.ByteString
 marshalInBS (LMDB.MDB_val len ptr) = BS.packCStringLen (castPtr ptr, fromIntegral len)
@@ -354,66 +332,62 @@ getDb ::
   -> LMDB.Transaction mode (LMDBMK k v)
 getDb (NameMK name) = LMDBMK name <$> LMDB.getDatabase (Just name)
 
--- | @`lmdbInitRangeReadTable` count db0@ performs a range read of roughly
--- @count@ values from database @db0@, starting at the smallest key.
+-- | @'rangeReadFromStart' n db codec@ performs a range read of @count@ values
+-- from database @db@, starting from the first key in the database.
+--
+-- The @codec@ argument defines how to serialise/deserialise keys and values.
+--
+-- A range read can return less than @count@ values if there are not enough
+-- values to read.
 --
 -- Note: See @`RangeQuery`@ for more information about range queries.
---
--- Todo(jdral): Test this function; could be buggy.
-initRangeReadLMDBTable ::
-     Ord k
+rangeReadFromStart ::
+     forall k v mode. Ord k
   => Int
-  -> LMDBMK  k v
+  -> LMDBMK k v
   -> CodecMK k v
   -> LMDB.Transaction mode (ValuesMK k v)
-initRangeReadLMDBTable count (LMDBMK _ db) codecMK =
-    ApplyValuesMK <$> lmdbInitRangeReadTable
+rangeReadFromStart count (LMDBMK _ db) codecMK =
+    ApplyValuesMK . DS.Values <$>
+      LMDB.Cursor.runCursorAsTransaction
+        (LMDB.Codec.Codec encKey decKey)
+        (LMDB.Codec.Codec encVal decVal)
+        (LMDB.Cursor.cgetMany Nothing count)
+        db
   where
-    lmdbInitRangeReadTable =
-      -- This is inadequate. We are folding over the whole table, the
-      -- fiddling with either is to short circuit as best we can.
-      -- TODO improve lmdb-simple bindings to give better access to cursors
-      wrangle <$> foldrWithKey go (Right Map.empty) codecMK db
-      where
-        wrangle = either DS.Values DS.Values
-        go k v acc = do
-          m <- acc
-          when (Map.size m >= count) $ Left m
-          pure $ Map.insert k v m
+    CodecMK encKey encVal decKey decVal = codecMK
 
--- | @`lmdbRangeReadTable` count db0 ks@ performs a range read of roughly
--- @count@ values from database @db0@, starting at the largest key in @ks@.
+-- | @'rangeReadFromKey' n k db codec@ performs a range read of @count@ values
+-- from database @db@, starting from key @k@.
+--
+-- The @codec@ argument defines how to serialise/deserialise keys and values.
+--
+-- A range read can return less than @count@ values if there are not enough
+-- values to read.
 --
 -- Note: See @`RangeQuery`@ for more information about range queries.
---
--- Todo(jdral): Test this function; could be buggy.
-rangeReadLMDBTable ::
-     Ord k
+rangeReadFromKey ::
+     forall k v mode. Ord k
   => Int
-  -> LMDBMK  k v
+  -> LMDBMK k v
   -> CodecMK k v
-  -> KeysMK  k v
+  -> KeysMK k v
   -> LMDB.Transaction mode (ValuesMK k v)
-rangeReadLMDBTable count (LMDBMK _ db) codecMK (ApplyKeysMK (DS.Keys keys)) =
-    ApplyValuesMK <$> lmdbRangeReadTable
+rangeReadFromKey count (LMDBMK _ db) codecMK ksMK  =
+    ApplyValuesMK . DS.Values <$> case Set.lookupMax ks of
+      Nothing -> pure mempty
+      Just lastExcludedKey ->
+        LMDB.Cursor.runCursorAsTransaction
+          (LMDB.Codec.Codec encKey decKey)
+          (LMDB.Codec.Codec encVal decVal)
+          (LMDB.Cursor.cgetMany
+            (Just (lastExcludedKey, LMDB.Cursor.Exclusive))
+            count
+          )
+          db
   where
-    lmdbRangeReadTable =
-      case Set.lookupMax keys of
-          -- This is inadequate. We are folding over the whole table, the
-          -- fiddling with either is to short circuit as best we can.
-          -- TODO improve llvm-simple bindings to give better access to cursors
-          Nothing -> pure $ DS.Values Map.empty
-          Just lastExcludedKey ->
-            let
-              wrangle = either DS.Values DS.Values
-              go k v acc
-                | k <= lastExcludedKey = acc
-                | otherwise = do
-                    m <- acc
-                    when (Map.size m >= count) $ Left m
-                    pure $ Map.insert k v m
-            in
-              wrangle <$> foldrWithKey go (Right Map.empty) codecMK db
+    ApplyKeysMK (DS.Keys ks) = ksMK
+    CodecMK encKey encVal decKey decVal = codecMK
 
 initLMDBTable ::
      LMDBMK   k v
@@ -796,8 +770,8 @@ mkLMDBBackingStoreValueHandle Db{..} = do
     bsvhRangeRead :: HD.RangeQuery (LedgerTables l KeysMK) -> m (LedgerTables l ValuesMK)
     bsvhRangeRead HD.RangeQuery{rqPrev, rqCount} = let
       transaction = Just <$> case rqPrev of
-        Nothing -> zipLedgerTablesA (initRangeReadLMDBTable rqCount) dbBackingTables codecLedgerTables
-        Just keys -> zipLedgerTables2A (rangeReadLMDBTable rqCount) dbBackingTables codecLedgerTables keys
+        Nothing -> zipLedgerTablesA (rangeReadFromStart rqCount) dbBackingTables codecLedgerTables
+        Just keys -> zipLedgerTables2A (rangeReadFromKey rqCount) dbBackingTables codecLedgerTables keys
       in vhSubmit vh transaction >>= \case
         Nothing -> throwIO DbErrBadRangeRead
         Just x  -> pure x
