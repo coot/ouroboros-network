@@ -10,6 +10,7 @@
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TypeApplications           #-}
@@ -451,8 +452,14 @@ applyHelper f cfg blk TickedShelleyLedgerState{
 
 instance HasHardForkHistory (ShelleyBlock proto era) where
   type HardForkIndices (ShelleyBlock proto era) = '[ShelleyBlock proto era]
-  hardForkSummary = neverForksHardForkSummary $
-      shelleyEraParamsNeverHardForks . shelleyLedgerGenesis
+  hardForkSummary cfg st = HardFork.neverForksSummary undefined undefined
+    -- neverForksHardForkSummary $
+    --   shelleyEraParamsNeverHardForks . shelleyLedgerGenesis
+    where
+      epochSize = epochInfoSize_ undefined -- we need an EpochNo to get an 'Either Text EpochSize'
+      slotLength = epochInfoSlotLength_ undefined -- we need a SlotNo to get an 'Either Text SlotLength'
+      slotNo = shelleyLedgerTip
+      EpochInfo {..} = SL.epochInfo $ shelleyLedgerGlobals cfg
 
 instance ShelleyCompatible proto era
       => CommonProtocolParams (ShelleyBlock proto era) where

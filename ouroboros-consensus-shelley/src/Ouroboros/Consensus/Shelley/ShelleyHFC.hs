@@ -141,18 +141,16 @@ shelleyTransition ShelleyPartialLedgerConfig{..}
                   state =
       takeAny
     . mapMaybe isTransition
-    . Shelley.Inspect.protocolUpdates genesis
+    . Shelley.Inspect.protocolUpdates shelleyLedgerConfig
     $ state
   where
     ShelleyTransitionInfo{..} = shelleyLedgerTransition state
 
     -- 'shelleyLedgerConfig' contains a dummy 'EpochInfo' but this does not
     -- matter for extracting the genesis config
-    genesis :: SL.ShelleyGenesis era
-    genesis = shelleyLedgerGenesis shelleyLedgerConfig
 
     k :: Word64
-    k = SL.sgSecurityParam genesis
+    k = SL.securityParameter $ shelleyLedgerGlobals shelleyLedgerConfig
 
     isTransition :: Shelley.Inspect.ProtocolUpdate era -> Maybe EpochNo
     isTransition Shelley.Inspect.ProtocolUpdate{..} = do
