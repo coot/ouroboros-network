@@ -130,7 +130,7 @@ data Arguments m = Arguments
 
     , aPeerSelectionTargets :: PeerSelectionTargets
     , aReadLocalRootPeers   :: STM m [(Int, Map RelayAccessPoint PeerAdvertise)]
-    , aReadPublicRootPeers  :: STM m [RelayAccessPoint]
+    , aReadPublicRootPeers  :: STM m (Map RelayAccessPoint PeerAdvertise)
     , aReadUseLedgerAfter   :: STM m UseLedgerAfter
     , aProtocolIdleTimeout  :: DiffTime
     , aTimeWaitTimeout      :: DiffTime

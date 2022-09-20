@@ -112,7 +112,7 @@ data SimArgs =
       -- ^ 'randomBlockGenerationArgs' quota value
     , saMbTime                :: Maybe DiffTime
       -- ^ 'LimitsAndTimeouts' argument
-    , saRelays                :: [RelayAccessPoint]
+    , saRelays                :: Map RelayAccessPoint PeerAdvertise
       -- ^ 'Interfaces' relays auxiliary value
     , saDomainMap             :: Map Domain [IP]
       -- ^ 'Interfaces' 'iDomainMap' value
@@ -329,6 +329,8 @@ genNonHotDiffusionScript = do
 
       lrp <- genLocalRootPeers rapsWithoutSelf rap
       relays <- sublistOf rapsWithoutSelf
+      relayPeerAdvertise <- vectorOf (length relays) arbitrary
+      let relayMap = Map.fromList (zip relays relayPeerAdvertise)
 
       peerSelectionTargets <- arbitrary
       dnsTimeout <- arbitrary
@@ -339,7 +341,7 @@ genNonHotDiffusionScript = do
           , saSeed                  = seed
           , saQuota                 = quota
           , saMbTime                = mustReplyTimeout
-          , saRelays                = relays
+          , saRelays                = relayMap
           , saDomainMap             = dMap
           , saAddr                  = ntnAddr
           , saLocalRootPeers        = lrp
@@ -447,6 +449,8 @@ genHotDiffusionScript = do
 
         lrp <- genLocalRootPeers rapsWithoutSelf rap
         relays <- sublistOf rapsWithoutSelf
+        relayPeerAdvertise <- vectorOf (length relays) arbitrary
+        let relayMap = Map.fromList (zip relays relayPeerAdvertise)
 
         -- Make sure our targets for active peers cover the maximum of peers
         -- one generated
@@ -461,7 +465,7 @@ genHotDiffusionScript = do
             , saSeed                  = seed
             , saQuota                 = quota
             , saMbTime                = mustReplyTimeout
-            , saRelays                = relays
+            , saRelays                = relayMap
             , saDomainMap             = dMap
             , saAddr                  = ntnAddr
             , saLocalRootPeers        = lrp
@@ -814,14 +818,14 @@ diffusionSimulation
                          arguments
                          (tracersExtraWithTimeName rap)
 
-    domainResolver :: [RelayAccessPoint]
+    domainResolver :: Map RelayAccessPoint PeerAdvertise
                    -> StrictTVar m (Map Domain [(IP, TTL)])
                    -> LookupReqs
                    -> [DomainAccessPoint]
                    -> m (Map DomainAccessPoint (Set NtNAddr))
     domainResolver raps dMapVar _ daps = do
       dMap <- fmap (map fst) <$> atomically (readTVar dMapVar)
-      let domains    = [ (d, p) | RelayAccessDomain d p <- raps ]
+      let domains    = [ (d, p) | (RelayAccessDomain d p, _) <- Map.assocs raps ]
           domainsAP  = uncurry DomainAccessPoint <$> domains
           mapDomains = [ ( DomainAccessPoint d p
                          , Set.fromList

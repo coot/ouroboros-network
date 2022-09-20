@@ -15,6 +15,7 @@ import           Data.Text.Encoding (encodeUtf8)
 import           Data.Word (Word32)
 
 import           Ouroboros.Network.PeerSelection.Governor
+import           Ouroboros.Network.PeerSelection.LedgerPeers (LedgerPeer (..))
 import           Ouroboros.Network.PeerSelection.RootPeersDNS
                      (DomainAccessPoint (..), RelayAccessPoint (..))
 import           Ouroboros.Network.PeerSelection.Types
@@ -50,6 +51,11 @@ instance Arbitrary PeerAdvertise where
   shrink DoAdvertisePeer    = []
   shrink DoNotAdvertisePeer = [DoAdvertisePeer]
 
+instance Arbitrary PeerSharing where
+  arbitrary = elements [ NoPeerSharing, PeerSharingPrivate, PeerSharingPublic ]
+
+instance Arbitrary LedgerPeer where
+  arbitrary = elements [ IsLedgerPeer, IsNotLedgerPeer ]
 
 instance Arbitrary PeerSelectionTargets where
   arbitrary = do

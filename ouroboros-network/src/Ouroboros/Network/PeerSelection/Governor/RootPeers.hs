@@ -3,6 +3,7 @@
 
 module Ouroboros.Network.PeerSelection.Governor.RootPeers (belowTarget) where
 
+import qualified Data.Map.Strict as Map
 import           Data.Semigroup (Min (..))
 import qualified Data.Set as Set
 
@@ -68,11 +69,12 @@ belowTarget actions
 
 
 jobReqPublicRootPeers :: forall m peeraddr peerconn.
-                         (Monad m, Ord peeraddr)
+                         (MonadSTM m, Ord peeraddr)
                       => PeerSelectionActions peeraddr peerconn m
                       -> Int
                       -> Job () m (Completion m peeraddr peerconn)
-jobReqPublicRootPeers PeerSelectionActions{requestPublicRootPeers}
+jobReqPublicRootPeers PeerSelectionActions{ requestPublicRootPeers
+                                          }
                    numExtraAllowed =
     Job job (return . handler) () "reqPublicRootPeers"
   where
@@ -108,11 +110,11 @@ jobReqPublicRootPeers PeerSelectionActions{requestPublicRootPeers}
     job = do
       (results, ttl) <- requestPublicRootPeers numExtraAllowed
       return $ Completion $ \st now ->
-        let newPeers         = results Set.\\ LocalRootPeers.keysSet (localRootPeers st)
-                                       Set.\\ publicRootPeers st
-            publicRootPeers' = publicRootPeers st <> newPeers
+        let newPeers         = results `Map.withoutKeys` LocalRootPeers.keysSet (localRootPeers st)
+                                       `Map.withoutKeys` publicRootPeers st
+            publicRootPeers' = publicRootPeers st <> Map.keysSet newPeers
             knownPeers'      = KnownPeers.insert
-                                 newPeers
+                                 (Map.map (\(a, b) -> (Nothing, a, b)) newPeers)
                                  (knownPeers st)
 
             -- We got a successful response to our request, but if we're still
@@ -123,7 +125,7 @@ jobReqPublicRootPeers PeerSelectionActions{requestPublicRootPeers}
             -- seconds is just over an hour.
             publicRootBackoffs' :: Int
             publicRootBackoffs'
-              | Set.null newPeers = (publicRootBackoffs st `max` 0) + 1
+              | Map.null newPeers = (publicRootBackoffs st `max` 0) + 1
               | otherwise         = 0
 
             publicRootRetryDiffTime :: DiffTime
@@ -141,7 +143,7 @@ jobReqPublicRootPeers PeerSelectionActions{requestPublicRootPeers}
 
              Decision {
                 decisionTrace = TracePublicRootsResults
-                                  newPeers
+                                  (Map.map fst newPeers)
                                   publicRootBackoffs'
                                   publicRootRetryDiffTime,
                 decisionState = st {

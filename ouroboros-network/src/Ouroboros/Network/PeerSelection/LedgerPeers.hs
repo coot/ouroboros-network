@@ -18,6 +18,7 @@ module Ouroboros.Network.PeerSelection.LedgerPeers
   , accPoolStake
   , withLedgerPeers
   , UseLedgerAfter (..)
+  , LedgerPeer (..)
   , Socket.PortNumber
   ) where
 
@@ -55,6 +56,10 @@ data UseLedgerAfter = DontUseLedger | UseLedgerAfter SlotNo deriving (Eq, Show)
 isLedgerPeersEnabled :: UseLedgerAfter -> Bool
 isLedgerPeersEnabled DontUseLedger = False
 isLedgerPeersEnabled _             = True
+
+-- | Identifies a peer as coming from ledger or not
+data LedgerPeer = IsLedgerPeer | IsNotLedgerPeer
+  deriving (Eq, Show)
 
 newtype NumberOfPeers = NumberOfPeers Word16 deriving Show
 

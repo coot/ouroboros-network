@@ -210,7 +210,7 @@ data ArgumentsExtra m = ArgumentsExtra {
       daPeerSelectionTargets :: PeerSelectionTargets
 
     , daReadLocalRootPeers  :: STM m [(Int, Map RelayAccessPoint PeerAdvertise)]
-    , daReadPublicRootPeers :: STM m [RelayAccessPoint]
+    , daReadPublicRootPeers :: STM m (Map RelayAccessPoint PeerAdvertise)
     , daReadUseLedgerAfter  :: STM m UseLedgerAfter
 
       -- | Timeout which starts once all responder protocols are idle. If the

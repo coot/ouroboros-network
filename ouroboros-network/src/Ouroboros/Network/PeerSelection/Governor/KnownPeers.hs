@@ -7,6 +7,7 @@ module Ouroboros.Network.PeerSelection.Governor.KnownPeers
   , aboveTarget
   ) where
 
+import qualified Data.Map as Map
 import           Data.Maybe (fromMaybe)
 import           Data.Semigroup (Min (..))
 import qualified Data.Set as Set
@@ -21,7 +22,9 @@ import           Control.Monad.Class.MonadTimer
 import qualified Ouroboros.Network.PeerSelection.EstablishedPeers as EstablishedPeers
 import           Ouroboros.Network.PeerSelection.Governor.Types
 import qualified Ouroboros.Network.PeerSelection.KnownPeers as KnownPeers
+import           Ouroboros.Network.PeerSelection.LedgerPeers (LedgerPeer (..))
 import qualified Ouroboros.Network.PeerSelection.LocalRootPeers as LocalRootPeers
+import           Ouroboros.Network.PeerSelection.Types (PeerAdvertise (..))
 
 
 ---------------------------
@@ -137,13 +140,20 @@ jobGossip PeerSelectionActions{requestPeerGossip}
               newPeers    = [ p | Right ps <- totalResults, p <- ps ]
           return $ Completion $ \st _ -> Decision {
             decisionTrace = TraceGossipResults peerResults,
-            decisionState = st {
-                              --TODO: also update with the failures
-                              knownPeers = KnownPeers.insert
-                                             (Set.fromList newPeers)
-                                             (knownPeers st),
-                              inProgressGossipReqs = inProgressGossipReqs st
-                                                   - length peers
+            decisionState = st { -- TODO: also update with the failures
+                                 --
+                                 -- TODO: Update logic to check for ledger peers before adding
+                                 knownPeers = KnownPeers.insert
+                                                (Map.fromList
+                                                 $ map (\a -> ( a
+                                                              , ( Nothing
+                                                                , DoAdvertisePeer
+                                                                , IsNotLedgerPeer))
+                                                       )
+                                                       newPeers)
+                                                (knownPeers st),
+                                 inProgressGossipReqs = inProgressGossipReqs st
+                                                      - length peers
                             },
             decisionJobs  = []
           }
@@ -166,13 +176,20 @@ jobGossip PeerSelectionActions{requestPeerGossip}
 
           return $ Completion $ \st _ -> Decision {
             decisionTrace = TraceGossipResults peerResults,
-            decisionState = st {
-                              --TODO: also update with the failures
-                              knownPeers = KnownPeers.insert
-                                             (Set.fromList newPeers)
-                                             (knownPeers st),
-                              inProgressGossipReqs = inProgressGossipReqs st
-                                                   - length peerResults
+            decisionState = st { -- TODO: also update with the failures
+                                 --
+                                 -- TODO: Update logic to check for ledger peers before adding
+                                 knownPeers = KnownPeers.insert
+                                                (Map.fromList
+                                                 $ map (\a -> ( a
+                                                              , ( Nothing
+                                                                , DoAdvertisePeer
+                                                                , IsNotLedgerPeer))
+                                                       )
+                                                       newPeers)
+                                                (knownPeers st),
+                                 inProgressGossipReqs = inProgressGossipReqs st
+                                                      - length peerResults
                             },
             decisionJobs  = [Job (jobPhase2 peersRemaining gossipsRemaining)
                                  (handler peersRemaining)
@@ -211,13 +228,20 @@ jobGossip PeerSelectionActions{requestPeerGossip}
 
       return $ Completion $ \st _ -> Decision {
         decisionTrace = TraceGossipResults peerResults,
-        decisionState = st {
-                          --TODO: also update with the failures
-                          knownPeers = KnownPeers.insert
-                                         (Set.fromList newPeers)
-                                         (knownPeers st),
-                          inProgressGossipReqs = inProgressGossipReqs st
-                                               - length peers
+        decisionState = st { -- TODO: also update with the failures
+                             --
+                             -- TODO: Update logic to check for ledger peers before adding
+                             knownPeers = KnownPeers.insert
+                                            (Map.fromList
+                                             $ map (\a -> ( a
+                                                          , ( Nothing
+                                                            , DoAdvertisePeer
+                                                            , IsNotLedgerPeer))
+                                                   )
+                                                   newPeers)
+                                            (knownPeers st),
+                             inProgressGossipReqs = inProgressGossipReqs st
+                                                  - length peers
                         },
         decisionJobs  = []
       }

@@ -60,6 +60,7 @@ import           Ouroboros.Network.PeerSelection.EstablishedPeers
 import qualified Ouroboros.Network.PeerSelection.EstablishedPeers as EstablishedPeers
 import           Ouroboros.Network.PeerSelection.KnownPeers (KnownPeers)
 import qualified Ouroboros.Network.PeerSelection.KnownPeers as KnownPeers
+import           Ouroboros.Network.PeerSelection.LedgerPeers (LedgerPeer)
 import           Ouroboros.Network.PeerSelection.LocalRootPeers (LocalRootPeers)
 import qualified Ouroboros.Network.PeerSelection.LocalRootPeers as LocalRootPeers
 import           Ouroboros.Network.PeerSelection.Types
@@ -186,6 +187,12 @@ data PeerSelectionActions peeraddr peerconn m = PeerSelectionActions {
        --
        readLocalRootPeers       :: STM m [(Int, Map peeraddr PeerAdvertise)],
 
+       -- | Read the current Peer Sharing willingness value
+       --
+       -- This value comes from the Node's configuration file.
+       --
+       readPeerSharing :: STM m PeerSharing,
+
        -- | Request a sample of public root peers.
        --
        -- It is intended to cover use cases including:
@@ -194,7 +201,7 @@ data PeerSelectionActions peeraddr peerconn m = PeerSelectionActions {
        -- * stake pool relays published in the blockchain
        -- * a pre-distributed snapshot of stake pool relays from the blockchain
        --
-       requestPublicRootPeers   :: Int -> m (Set peeraddr, DiffTime),
+       requestPublicRootPeers   :: Int -> m (Map peeraddr (PeerAdvertise, LedgerPeer), DiffTime),
 
        -- | The action to contact a known peer and request a sample of its
        -- known peers.
@@ -582,7 +589,7 @@ data TracePeerSelection peeraddr =
                                   (LocalRootPeers peeraddr)
      | TraceTargetsChanged     PeerSelectionTargets PeerSelectionTargets
      | TracePublicRootsRequest Int Int
-     | TracePublicRootsResults (Set peeraddr) Int DiffTime
+     | TracePublicRootsResults (Map peeraddr PeerAdvertise) Int DiffTime
      | TracePublicRootsFailure SomeException Int DiffTime
      -- | target known peers, actual known peers, peers available for gossip,
      -- peers selected for gossip
