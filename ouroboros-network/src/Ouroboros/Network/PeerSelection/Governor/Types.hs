@@ -88,22 +88,22 @@ type PickPolicy peeraddr m =
 
 data PeerSelectionPolicy peeraddr m = PeerSelectionPolicy {
 
-       policyPickKnownPeersForGossip :: PickPolicy peeraddr m,
-       policyPickColdPeersToPromote  :: PickPolicy peeraddr m,
-       policyPickWarmPeersToPromote  :: PickPolicy peeraddr m,
-       policyPickHotPeersToDemote    :: PickPolicy peeraddr m,
-       policyPickWarmPeersToDemote   :: PickPolicy peeraddr m,
-       policyPickColdPeersToForget   :: PickPolicy peeraddr m,
+       policyPickKnownPeersForPeerShare :: PickPolicy peeraddr m,
+       policyPickColdPeersToPromote     :: PickPolicy peeraddr m,
+       policyPickWarmPeersToPromote     :: PickPolicy peeraddr m,
+       policyPickHotPeersToDemote       :: PickPolicy peeraddr m,
+       policyPickWarmPeersToDemote      :: PickPolicy peeraddr m,
+       policyPickColdPeersToForget      :: PickPolicy peeraddr m,
 
-       policyFindPublicRootTimeout   :: !DiffTime,
-       policyMaxInProgressGossipReqs :: !Int,
-       policyGossipRetryTime         :: !DiffTime,
-       policyGossipBatchWaitTime     :: !DiffTime,
-       policyGossipOverallTimeout    :: !DiffTime,
+       policyFindPublicRootTimeout      :: !DiffTime,
+       policyMaxInProgressPeerShareReqs :: !Int,
+       policyPeerShareRetryTime         :: !DiffTime,
+       policyPeerShareBatchWaitTime     :: !DiffTime,
+       policyPeerShareOverallTimeout    :: !DiffTime,
 
        -- | Reconnection delay, passed from `ExitPolicy`.
        --
-       policyErrorDelay              :: !DiffTime
+       policyErrorDelay                 :: !DiffTime
      }
 
 
@@ -209,7 +209,7 @@ data PeerSelectionActions peeraddr peerconn m = PeerSelectionActions {
        -- This is synchronous, but it should expect to be interrupted by a
        -- timeout asynchronous exception. Failures are throw as exceptions.
        --
-       requestPeerGossip        :: peeraddr -> m [peeraddr],
+       requestPeerShare        :: peeraddr -> m [peeraddr],
 
        -- | Core actions run by the governor to change 'PeerStatus'.
        --
@@ -290,7 +290,7 @@ data PeerSelectionState peeraddr peerconn = PeerSelectionState {
        publicRootRetryTime      :: !Time,
 
        inProgressPublicRootsReq :: !Bool,
-       inProgressGossipReqs     :: !Int,
+       inProgressPeerShareReqs  :: !Int,
        inProgressPromoteCold    :: !(Set peeraddr),
        inProgressPromoteWarm    :: !(Set peeraddr),
        inProgressDemoteWarm     :: !(Set peeraddr),
@@ -348,7 +348,7 @@ emptyPeerSelectionState rng localRoots =
       publicRootBackoffs   = 0,
       publicRootRetryTime  = Time 0,
       inProgressPublicRootsReq = False,
-      inProgressGossipReqs     = 0,
+      inProgressPeerShareReqs  = 0,
       inProgressPromoteCold    = Set.empty,
       inProgressPromoteWarm    = Set.empty,
       inProgressDemoteWarm     = Set.empty,
@@ -420,7 +420,7 @@ assertPeerSelectionState PeerSelectionState{..} =
     -- No constraint for publicRootBackoffs, publicRootRetryTime
     -- or inProgressPublicRootsReq
 
-  . assert (inProgressGossipReqs >= 0)
+  . assert (inProgressPeerShareReqs >= 0)
   . assert (Set.isSubsetOf inProgressPromoteCold coldPeersSet)
   . assert (Set.isSubsetOf inProgressPromoteWarm warmPeersSet)
   . assert (Set.isSubsetOf inProgressDemoteWarm  warmPeersSet)
@@ -478,7 +478,7 @@ pickPeers PeerSelectionState{localRootPeers, publicRootPeers, knownPeers}
     peerSource p
       | LocalRootPeers.member p localRootPeers = PeerSourceLocalRoot
       | Set.member p publicRootPeers           = PeerSourcePublicRoot
-      | KnownPeers.member p knownPeers         = PeerSourceGossip
+      | KnownPeers.member p knownPeers         = PeerSourcePeerShare
       | otherwise                              = errorUnavailable
 
     peerConnectFailCount p =
@@ -591,10 +591,10 @@ data TracePeerSelection peeraddr =
      | TracePublicRootsRequest Int Int
      | TracePublicRootsResults (Map peeraddr PeerAdvertise) Int DiffTime
      | TracePublicRootsFailure SomeException Int DiffTime
-     -- | target known peers, actual known peers, peers available for gossip,
-     -- peers selected for gossip
-     | TraceGossipRequests     Int Int (Set peeraddr) (Set peeraddr)
-     | TraceGossipResults      [(peeraddr, Either SomeException [peeraddr])] --TODO: classify failures
+     -- | target known peers, actual known peers, peers available for
+     -- peer sharing, peers selected for peer sharing
+     | TracePeerShareRequests     Int Int (Set peeraddr) (Set peeraddr)
+     | TracePeerShareResults      [(peeraddr, Either SomeException [peeraddr])] --TODO: classify failures
      -- | target known peers, actual known peers, selected peer
      | TraceForgetColdPeers    Int Int (Set peeraddr)
      -- | target established, actual established, selected peers

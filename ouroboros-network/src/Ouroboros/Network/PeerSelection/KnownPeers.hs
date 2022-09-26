@@ -54,7 +54,7 @@ import           Ouroboros.Network.PeerSelection.Types (PeerAdvertise,
 -- It has one special feature:
 --
 --  * It tracks the subset of peers that we are happy to publish in reply to
---    gossip requests to our node. It supports random sampling from this set.
+--    peer share requests to our node. It supports random sampling from this set.
 --
 data KnownPeers peeraddr = KnownPeers {
 

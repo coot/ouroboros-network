@@ -20,7 +20,7 @@ import           GHC.Generics (Generic)
 --
 data PeerSource = PeerSourceLocalRoot
                 | PeerSourcePublicRoot
-                | PeerSourceGossip
+                | PeerSourcePeerShare
   deriving (Eq, Ord, Show, Enum)
 
 

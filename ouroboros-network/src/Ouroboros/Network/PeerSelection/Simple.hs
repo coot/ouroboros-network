@@ -79,7 +79,7 @@ withPeerSelectionActions
             readLocalRootPeers = toList <$> readTVar localRootsVar,
             readPeerSharing = return NoPeerSharing, -- TODO: Make this dynamic
             requestPublicRootPeers = requestPublicRootPeers,
-            requestPeerGossip = \_ -> pure [],
+            requestPeerShare = \_ -> pure [],
             peerStateActions
           }
     withAsync
