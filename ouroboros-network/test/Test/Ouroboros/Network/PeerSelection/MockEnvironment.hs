@@ -116,7 +116,8 @@ data GovernorMockEnvironment = GovernorMockEnvironment {
        pickWarmPeersToPromote     :: PickScript PeerAddr,
        pickHotPeersToDemote       :: PickScript PeerAddr,
        pickWarmPeersToDemote      :: PickScript PeerAddr,
-       pickColdPeersToForget      :: PickScript PeerAddr
+       pickColdPeersToForget      :: PickScript PeerAddr,
+       peerSharing                :: PeerSharing
      }
   deriving (Show, Eq)
 
@@ -284,7 +285,8 @@ mockPeerSelectionActions' :: forall m.
 mockPeerSelectionActions' tracer
                           GovernorMockEnvironment {
                             localRootPeers,
-                            publicRootPeers
+                            publicRootPeers,
+                            peerSharing
                           }
                           PeerSelectionPolicy {
                             policyPeerShareRetryTime
@@ -294,7 +296,7 @@ mockPeerSelectionActions' tracer
                           connsVar =
     PeerSelectionActions {
       readLocalRootPeers       = return (LocalRootPeers.toGroups localRootPeers),
-      readPeerSharing          = return NoPeerSharing, -- TODO: Make this dynamic
+      readPeerSharing          = return peerSharing,
       requestPublicRootPeers,
       readPeerSelectionTargets = readTVar targetsVar,
       requestPeerShare,
@@ -582,6 +584,7 @@ instance Arbitrary GovernorMockEnvironment where
       pickHotPeersToDemote    <- arbitraryPickScript arbitrarySubsetOfPeers
       pickWarmPeersToDemote   <- arbitraryPickScript arbitrarySubsetOfPeers
       pickColdPeersToForget   <- arbitraryPickScript arbitrarySubsetOfPeers
+      peerSharing             <- arbitrary
       return GovernorMockEnvironment{..}
     where
       arbitraryRootPeers :: Set PeerAddr
@@ -628,7 +631,8 @@ instance Arbitrary GovernorMockEnvironment where
            pickWarmPeersToPromote,
            pickHotPeersToDemote,
            pickWarmPeersToDemote,
-           pickColdPeersToForget
+           pickColdPeersToForget,
+           peerSharing
          } =
       -- Special rule for shrinking the peerGraph because the localRootPeers
       -- depends on it so has to be updated too.
@@ -650,7 +654,8 @@ instance Arbitrary GovernorMockEnvironment where
           pickWarmPeersToPromote  = pickWarmPeersToPromote',
           pickHotPeersToDemote    = pickHotPeersToDemote',
           pickWarmPeersToDemote   = pickWarmPeersToDemote',
-          pickColdPeersToForget   = pickColdPeersToForget'
+          pickColdPeersToForget   = pickColdPeersToForget',
+          peerSharing
         }
       | (localRootPeers', publicRootPeers', targets',
          pickKnownPeersForPeerShare',

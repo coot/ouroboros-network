@@ -21,10 +21,13 @@ import           Control.Monad.Class.MonadTimer
 
 import qualified Ouroboros.Network.PeerSelection.EstablishedPeers as EstablishedPeers
 import           Ouroboros.Network.PeerSelection.Governor.Types
+import           Ouroboros.Network.PeerSelection.KnownPeers
+                     (isLedgerPeer)
 import qualified Ouroboros.Network.PeerSelection.KnownPeers as KnownPeers
 import           Ouroboros.Network.PeerSelection.LedgerPeers (LedgerPeer (..))
 import qualified Ouroboros.Network.PeerSelection.LocalRootPeers as LocalRootPeers
-import           Ouroboros.Network.PeerSelection.Types (PeerAdvertise (..))
+import           Ouroboros.Network.PeerSelection.Types (PeerAdvertise (..),
+                     PeerSharing (..))
 
 
 ---------------------------
@@ -37,8 +40,10 @@ import           Ouroboros.Network.PeerSelection.Types (PeerAdvertise (..))
 --
 belowTarget :: (MonadAsync m, MonadTimer m, Ord peeraddr)
             => PeerSelectionActions peeraddr peerconn m
+            -> PeerSharing
             -> MkGuardedDecision peeraddr peerconn m
 belowTarget actions
+            peerSharing
             policy@PeerSelectionPolicy {
               policyMaxInProgressPeerShareReqs,
               policyPickKnownPeersForPeerShare,
@@ -52,8 +57,10 @@ belowTarget actions
                           targetNumberOfKnownPeers
                         }
             }
+    -- Only start Peer Sharing request if PeerSharing was enabled
+  | peerSharing /= NoPeerSharing
     -- Are we under target for number of known peers?
-  | numKnownPeers < targetNumberOfKnownPeers
+  , numKnownPeers < targetNumberOfKnownPeers
 
     -- Are we at our limit for number of peer share requests?
   , numPeerShareReqsPossible > 0
@@ -61,10 +68,14 @@ belowTarget actions
     -- Are there any known peers that we can send a peer share request to?
     -- We can only ask ones where we have not asked them within a certain time.
   , not (Set.null availableForPeerShare)
+
+    -- Are there any peers from the availableForPeerShare set we can really ask
+    -- (i.e. have correct PeerSharing permissions)?
+  , not (Set.null canAsk)
   = Guarded Nothing $ do
       selectedForPeerShare <- pickPeers st
                              policyPickKnownPeersForPeerShare
-                             availableForPeerShare
+                             canAsk
                              numPeerShareReqsPossible
       let numPeerShareReqs = Set.size selectedForPeerShare
       return $ \now -> Decision {
@@ -99,6 +110,9 @@ belowTarget actions
     numPeerShareReqsPossible = policyMaxInProgressPeerShareReqs
                              - inProgressPeerShareReqs
     availableForPeerShare    = EstablishedPeers.availableForPeerShare establishedPeers
+    -- Only ask peers which have the correct willingness permission flags
+    canAsk                   =
+      KnownPeers.getAvailablePeerSharingPeers availableForPeerShare knownPeers
 
 
 jobPeerShare :: forall m peeraddr peerconn.
@@ -114,14 +128,13 @@ jobPeerShare PeerSelectionActions{requestPeerShare}
     handler :: [peeraddr] -> SomeException -> m (Completion m peeraddr peerconn)
     handler peers e = return $
       Completion $ \st _ ->
-      Decision {
-        decisionTrace = TracePeerShareResults [ (p, Left e) | p <- peers ],
-        decisionState = st {
-                          inProgressPeerShareReqs = inProgressPeerShareReqs st
-                                                  - length peers
-                        },
-        decisionJobs  = []
-      }
+      Decision { decisionTrace = TracePeerShareResults [ (p, Left e) | p <- peers ]
+               , decisionState =
+                  st { inProgressPeerShareReqs = inProgressPeerShareReqs st
+                                               - length peers
+                     }
+               , decisionJobs  = []
+               }
 
     jobPhase1 :: [peeraddr] -> m (Completion m peeraddr peerconn)
     jobPhase1 peers = do
@@ -137,28 +150,31 @@ jobPeerShare PeerSelectionActions{requestPeerShare}
       -- the time)
       results <- waitAllCatchOrTimeout peerShares policyPeerShareBatchWaitTime
       case results of
-        Right totalResults -> do
-          let peerResults = zip peers totalResults
-              newPeers    = [ p | Right ps <- totalResults, p <- ps ]
-          return $ Completion $ \st _ -> Decision {
-            decisionTrace = TracePeerShareResults peerResults,
-            decisionState = st { -- TODO: also update with the failures
-                                 --
-                                 -- TODO: Update logic to check for ledger peers before adding
-                                 knownPeers = KnownPeers.insert
-                                                (Map.fromList
-                                                 $ map (\a -> ( a
-                                                              , ( Nothing
-                                                                , DoAdvertisePeer
-                                                                , IsNotLedgerPeer))
-                                                       )
-                                                       newPeers)
-                                                (knownPeers st),
-                                 inProgressPeerShareReqs = inProgressPeerShareReqs st
-                                                         - length peers
-                            },
-            decisionJobs  = []
-          }
+        Right totalResults ->
+          return $ Completion $ \st _ ->
+           let peerResults = zip peers totalResults
+               -- Filter known-to-be ledger peers before adding them to known
+               -- peers
+               newPeers    = [ p | Right ps <- totalResults
+                                 , p <- ps
+                                 , not (isLedgerPeer p (knownPeers st)) ]
+            in Decision { decisionTrace = TracePeerShareResults peerResults
+                        , decisionState =
+                           st { -- TODO: also update with the failures
+                                knownPeers = KnownPeers.insert
+                                               (Map.fromList
+                                                $ map (\a -> ( a
+                                                             , ( Nothing
+                                                               , DoAdvertisePeer
+                                                               , IsNotLedgerPeer))
+                                                      )
+                                                      newPeers)
+                                               (knownPeers st),
+                                inProgressPeerShareReqs = inProgressPeerShareReqs st
+                                                        - length peers
+                           }
+                        , decisionJobs  = []
+                        }
 
         -- But if any don't make the first timeout then they'll be added later
         -- when they do reply or never if we hit the hard timeout.
@@ -168,19 +184,20 @@ jobPeerShare PeerSelectionActions{requestPeerShare}
           -- addresses and the peer share requests, completed and still in progress:
           let peerResults      = [ (p, r)
                                  | (p, Just r)  <- zip peers   partialResults ]
-              newPeers         = [  p
-                                 | Just (Right ps) <-          partialResults
-                                 ,  p <- ps ]
               peersRemaining   = [  p
                                  | (p, Nothing) <- zip peers   partialResults ]
               peerSharesRemaining = [  a
                                  | (a, Nothing) <- zip peerShares partialResults ]
 
-          return $ Completion $ \st _ -> Decision {
-            decisionTrace = TracePeerShareResults peerResults,
-            decisionState = st { -- TODO: also update with the failures
-                                 --
-                                 -- TODO: Update logic to check for ledger peers before adding
+          return $ Completion $ \st _ ->
+                -- Filter known-to-be ledger peers before adding them to known
+                -- peers
+            let newPeers = [  p | Just (Right ps) <- partialResults
+                                , p <- ps
+                                , not (isLedgerPeer p (knownPeers st)) ]
+             in Decision { decisionTrace = TracePeerShareResults peerResults
+                         , decisionState =
+                            st { -- TODO: also update with the failures
                                  knownPeers = KnownPeers.insert
                                                 (Map.fromList
                                                  $ map (\a -> ( a
@@ -192,12 +209,12 @@ jobPeerShare PeerSelectionActions{requestPeerShare}
                                                 (knownPeers st),
                                  inProgressPeerShareReqs = inProgressPeerShareReqs st
                                                          - length peerResults
-                            },
-            decisionJobs  = [Job (jobPhase2 peersRemaining peerSharesRemaining)
-                                 (handler peersRemaining)
-                                 ()
-                                 "peerSharePhase2"]
-          }
+                               }
+                         , decisionJobs  = [Job (jobPhase2 peersRemaining peerSharesRemaining)
+                                                (handler peersRemaining)
+                                                ()
+                                                "peerSharePhase2"]
+                         }
 
     jobPhase2 :: [peeraddr] -> [Async m [peeraddr]]
               -> m (Completion m peeraddr peerconn)
@@ -215,11 +232,6 @@ jobPeerShare PeerSelectionActions{requestPeerShare}
                                      | (p, r) <- zip peers partialResults ]
                 where err = Left (toException AsyncCancelled)
 
-          newPeers =
-            case results of
-              Right totalResults  -> [ p | Right ps <- totalResults,  p <- ps ]
-              Left partialResults -> [ p | Just (Right ps) <- partialResults,  p <- ps ]
-
           peerSharesIncomplete =
             case results of
               Right _totalResults -> []
@@ -228,11 +240,21 @@ jobPeerShare PeerSelectionActions{requestPeerShare}
 
       mapM_ cancel peerSharesIncomplete
 
-      return $ Completion $ \st _ -> Decision {
-        decisionTrace = TracePeerShareResults peerResults,
-        decisionState = st { -- TODO: also update with the failures
-                             --
-                             -- TODO: Update logic to check for ledger peers before adding
+      return $ Completion $ \st _ ->
+            -- Filter known-to-be ledger peers before adding them to known
+            -- peers
+        let newPeers =
+              case results of
+                Right totalResults  -> [ p | Right ps <- totalResults
+                                          , p <- ps
+                                          , not (isLedgerPeer p (knownPeers st)) ]
+                Left partialResults -> [ p | Just (Right ps) <- partialResults
+                                          , p <- ps
+                                          , not (isLedgerPeer p (knownPeers st)) ]
+
+         in Decision { decisionTrace = TracePeerShareResults peerResults
+                     , decisionState =
+                        st { -- TODO: also update with the failures
                              knownPeers = KnownPeers.insert
                                             (Map.fromList
                                              $ map (\a -> ( a
@@ -244,9 +266,9 @@ jobPeerShare PeerSelectionActions{requestPeerShare}
                                             (knownPeers st),
                              inProgressPeerShareReqs = inProgressPeerShareReqs st
                                                      - length peers
-                        },
-        decisionJobs  = []
-      }
+                           }
+                     , decisionJobs  = []
+                     }
 
 
 ---------------------------

@@ -25,6 +25,11 @@ module Ouroboros.Network.PeerSelection.KnownPeers
   , minConnectTime
   , setConnectTimes
   , availableToConnect
+    -- ** Selecting peers to ask
+  , canPeerShareRequest
+  , getAvailablePeerSharingPeers
+    -- ** Filtering ledger peers
+  , isLedgerPeer
   ) where
 
 import qualified Data.List as List
@@ -39,9 +44,10 @@ import qualified Data.Set as Set
 import           Control.Exception (assert)
 import           Control.Monad.Class.MonadTime
 
-import           Ouroboros.Network.PeerSelection.LedgerPeers (LedgerPeer)
+import           Ouroboros.Network.PeerSelection.LedgerPeers
+                     (LedgerPeer (IsLedgerPeer))
 import           Ouroboros.Network.PeerSelection.Types (PeerAdvertise,
-                     PeerSharing, combinePeerInformation)
+                     PeerSharing (..), combinePeerInformation)
 
 
 -------------------------------
@@ -359,6 +365,31 @@ setConnectTimes times
 
 
 ---------------------------------
+-- Selecting peers to ask
+--
+
+-- Only make Peer Share requests to peers which wish to participate in
+-- PeerSharing, i.e. have non-'NoPeerSharing' PeerSharing values.
+--
+canPeerShareRequest :: Ord peeraddr => peeraddr -> KnownPeers peeraddr -> Bool
+canPeerShareRequest pa KnownPeers { allPeers } =
+  case Map.lookup pa allPeers of
+    Just (KnownPeerInfo _ _ (Just PeerSharingPublic) _ _)  -> True
+    Just (KnownPeerInfo _ _ (Just PeerSharingPrivate) _ _) -> True
+    _                                                      -> False
+
+-- Filter available for Peer Sharing peers according to their PeerSharing
+-- information
+--
+getAvailablePeerSharingPeers :: Ord peeraddr
+                             => Set peeraddr
+                             -> KnownPeers peeraddr
+                             -> Set peeraddr
+getAvailablePeerSharingPeers availableForPeerShare knownPeers =
+  Set.filter (`canPeerShareRequest` knownPeers) availableForPeerShare
+
+
+---------------------------------
 -- Selecting peers to advertise
 --
 
@@ -384,3 +415,13 @@ sampleAdvertisedPeers _ _ _ = []
 -- in a relatively stable way, that's mostly insensitive to additions or
 -- deletions
 -}
+
+---------------------------------
+-- Filter ledger peers
+--
+
+isLedgerPeer :: Ord peeraddr => peeraddr -> KnownPeers peeraddr -> Bool
+isLedgerPeer peeraddr KnownPeers { allPeers } =
+  case Map.lookup peeraddr allPeers of
+    Just (KnownPeerInfo _ _ _ _ IsLedgerPeer) -> True
+    _                                         -> False
