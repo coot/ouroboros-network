@@ -33,7 +33,6 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger (
   , mkShelleyLedgerConfig
   , shelleyEraParams
   , shelleyEraParamsNeverHardForks
-  , shelleyLedgerGenesis
     -- * Auxiliary
   , ShelleyLedgerEvent (..)
   , ShelleyReapplyException (..)
@@ -58,6 +57,7 @@ import           Data.Coerce (coerce)
 import           Data.Functor ((<&>))
 import           Data.Functor.Identity
 import qualified Data.Text as Text
+import           Data.Void (Void)
 import           Data.Word
 import           GHC.Generics (Generic)
 import           GHC.Records
@@ -114,16 +114,18 @@ instance ShelleyBasedEra era => NoThunks (ShelleyLedgerError era)
 -------------------------------------------------------------------------------}
 
 data ShelleyLedgerConfig era = ShelleyLedgerConfig {
-      shelleyLedgerCompactGenesis     :: !(CompactGenesis era)
+      shelleyLedgerByronTranslationContext :: !(Core.ByronTranslationContext era)
       -- | Derived from 'shelleyLedgerGenesis' but we store a cached version
       -- because it used very often.
-    , shelleyLedgerGlobals            :: !SL.Globals
-    , shelleyLedgerTranslationContext :: !(Core.TranslationContext era)
+    , shelleyLedgerGlobals                 :: !SL.Globals
+    , shelleyLedgerTranslationContext      :: !(Core.TranslationContext era)
     }
-  deriving (Generic, NoThunks)
+  deriving (Generic)
 
-shelleyLedgerGenesis :: ShelleyLedgerConfig era -> SL.ShelleyGenesis era
-shelleyLedgerGenesis = getCompactGenesis . shelleyLedgerCompactGenesis
+deriving instance ShelleyBasedEra era => NoThunks (ShelleyLedgerConfig era)
+
+-- shelleyLedgerGenesis :: ShelleyLedgerConfig era -> SL.ShelleyGenesis era
+-- shelleyLedgerGenesis = getCompactGenesis . shelleyLedgerCompactGenesis
 
 shelleyEraParams ::
      SL.ShelleyGenesis era
@@ -155,8 +157,8 @@ mkShelleyLedgerConfig
   -> ShelleyLedgerConfig era
 mkShelleyLedgerConfig genesis transCtxt epochInfo mmpv =
     ShelleyLedgerConfig {
-        shelleyLedgerCompactGenesis     = compactGenesis genesis
-      , shelleyLedgerGlobals            =
+        shelleyLedgerByronTranslationContext = toByronTranslationContext genesis
+      , shelleyLedgerGlobals                 =
           SL.mkShelleyGlobals
             genesis
             (hoistEpochInfo (left (Text.pack . show) . runExcept) epochInfo)
@@ -165,6 +167,9 @@ mkShelleyLedgerConfig genesis transCtxt epochInfo mmpv =
       }
   where
     MaxMajorProtVer maxMajorPV = mmpv
+
+toByronTranslationContext :: SL.ShelleyGenesis era -> Core.ByronTranslationContext era
+toByronTranslationContext = undefined
 
 type instance LedgerCfg (LedgerState (ShelleyBlock proto era)) = ShelleyLedgerConfig era
 

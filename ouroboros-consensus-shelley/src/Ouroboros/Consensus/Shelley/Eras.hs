@@ -167,6 +167,7 @@ class ( Core.EraSegWits era
       , DSignable (EraCrypto era) (Hash (EraCrypto era) EraIndependentTxBody)
       , NoThunks (PredicateFailure (Core.EraRule "BBODY" era))
       , NoThunks (Core.TranslationContext era)
+      , NoThunks (Core.ByronTranslationContext era)
       , NoThunks (Core.Value era)
 
       ) => ShelleyBasedEra era where
