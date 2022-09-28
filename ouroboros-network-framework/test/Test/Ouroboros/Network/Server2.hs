@@ -335,7 +335,7 @@ withInitiatorOnlyConnectionManager
     -> AcceptedConnectionsLimit
     -> (MuxConnectionManager
           InitiatorMode socket peerAddr
-          UnversionedProtocol ByteString m [resp] Void
+          UnversionedProtocol DataFlowProtocolData ByteString m [resp] Void
        -> m a)
     -> m a
 withInitiatorOnlyConnectionManager name timeouts trTracer cmTracer snocket localAddr
@@ -356,7 +356,7 @@ withInitiatorOnlyConnectionManager name timeouts trTracer cmTracer snocket local
           cmAddressType = \_ -> Just IPv4Address,
           cmSnocket = snocket,
           cmConfigureSocket = \_ _ -> return (),
-          connectionDataFlow = getProtocolDataFlow . snd,
+          connectionDataFlow = \_ (Handle _ _ _ df) -> getProtocolDataFlow df,
           cmPrunePolicy = simplePrunePolicy,
           cmConnectionsLimits = acceptedConnLimit,
           cmTimeWaitTimeout = tTimeWaitTimeout timeouts,
@@ -499,7 +499,7 @@ withBidirectionalConnectionManager
     -> AcceptedConnectionsLimit
     -> (MuxConnectionManager
           InitiatorResponderMode socket peerAddr
-          UnversionedProtocol ByteString m [resp] acc
+          UnversionedProtocol DataFlowProtocolData ByteString m [resp] acc
        -> peerAddr
        -> Async m Void
        -> m a)
@@ -534,7 +534,7 @@ withBidirectionalConnectionManager name timeouts
           cmConfigureSocket = \sock _ -> confSock sock,
           cmTimeWaitTimeout = tTimeWaitTimeout timeouts,
           cmOutboundIdleTimeout = tOutboundIdleTimeout timeouts,
-          connectionDataFlow = getProtocolDataFlow . snd,
+          connectionDataFlow = \_ (Handle _ _ _ df) -> getProtocolDataFlow df,
           cmPrunePolicy = simplePrunePolicy,
           cmConnectionsLimits = acceptedConnLimit
         }
@@ -765,8 +765,8 @@ unidirectionalExperiment timeouts snocket confSock socket clientAndServerData = 
                      (\_ -> unregisterOutboundConnection connectionManager serverAddr)
                      (\connHandle -> do
                       case connHandle of
-                        Connected _ _ (Handle mux muxBundle _
-                                        :: Handle InitiatorMode peerAddr ByteString m [resp] Void) ->
+                        Connected _ _ (Handle mux muxBundle _ _
+                                        :: Handle InitiatorMode peerAddr DataFlowProtocolData ByteString m [resp] Void) ->
                           try @_ @SomeException $
                             (runInitiatorProtocols
                               SingInitiatorMode mux muxBundle
@@ -900,7 +900,7 @@ bidirectionalExperiment
                         localAddr1)
                     (\connHandle ->
                       case connHandle of
-                        Connected _ _ (Handle mux muxBundle _) -> do
+                        Connected _ _ (Handle mux muxBundle _ _) -> do
                           try @_ @SomeException $
                             runInitiatorProtocols
                               SingInitiatorResponderMode
@@ -922,7 +922,7 @@ bidirectionalExperiment
                         localAddr0)
                     (\connHandle ->
                       case connHandle of
-                        Connected _ _ (Handle mux muxBundle _) -> do
+                        Connected _ _ (Handle mux muxBundle _ _) -> do
                           try @_ @SomeException $
                             runInitiatorProtocols
                               SingInitiatorResponderMode
@@ -1637,8 +1637,8 @@ multinodeExperiment inboundTrTracer trTracer inboundTracer cmTracer
          -> peerAddr
          -> StrictTQueue m (ConnectionHandlerMessage peerAddr req)
          -- ^ control channel
-         -> MuxConnectionManager muxMode socket peerAddr UnversionedProtocol ByteString m [resp] a
-         -> Map.Map peerAddr (Handle muxMode peerAddr ByteString m [resp] a)
+         -> MuxConnectionManager muxMode socket peerAddr UnversionedProtocol DataFlowProtocolData ByteString m [resp] a
+         -> Map.Map peerAddr (Handle muxMode peerAddr DataFlowProtocolData ByteString m [resp] a)
          -- ^ active connections
          -> StrictTVar m (Map.Map (ConnectionId peerAddr) (TemperatureBundle (StrictTQueue m [req])))
          -- ^ mini protocol queues
@@ -1646,7 +1646,7 @@ multinodeExperiment inboundTrTracer trTracer inboundTracer cmTracer
     connectionLoop muxMode localAddr cc cm connMap0 connVar = go True connMap0
       where
         go :: Bool -- if false do not run 'unregisterOutboundConnection'
-           -> Map.Map peerAddr (Handle muxMode peerAddr ByteString m [resp] a) -- active connections
+           -> Map.Map peerAddr (Handle muxMode peerAddr DataFlowProtocolData ByteString m [resp] a) -- active connections
            -> m ()
         go !unregister !connMap = atomically (readTQueue cc) >>= \ case
           NewConnection remoteAddr -> do
@@ -1692,7 +1692,7 @@ multinodeExperiment inboundTrTracer trTracer inboundTracer cmTracer
               -- We want to throw because the generator invariant should never put us in
               -- this case
               Nothing -> throwIO (NoActiveConnection localAddr remoteAddr)
-              Just (Handle mux muxBundle _) -> do
+              Just (Handle mux muxBundle _ _) -> do
                 -- TODO:
                 -- At times this throws 'ProtocolAlreadyRunning'.
                 r <- tryJust (\(e :: SomeException) ->

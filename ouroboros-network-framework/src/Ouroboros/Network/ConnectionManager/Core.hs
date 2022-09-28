@@ -125,7 +125,7 @@ data ConnectionManagerArguments handlerTrace socket peerAddr handle handleError 
         -- | @version@ represents the tuple of @versionNumber@ and
         -- @agreedOptions@.
         --
-        connectionDataFlow    :: version -> DataFlow,
+        connectionDataFlow    :: version -> handle -> DataFlow,
 
         -- | Prune policy
         --
@@ -1157,7 +1157,7 @@ withConnectionManager ConnectionManagerArguments {
                 return (Disconnected connId (Just handleError))
 
               Right (handle, version) -> do
-                let dataFlow = connectionDataFlow version
+                let dataFlow = connectionDataFlow version handle
                 mbTransition <- atomically $ do
                   connState <- readTVar connVar
                   case connState of
@@ -1176,7 +1176,7 @@ withConnectionManager ConnectionManagerArguments {
                     UnnegotiatedState {} -> do
                       let connState' = InboundIdleState
                                          connId connThread handle
-                                         (connectionDataFlow version)
+                                         (connectionDataFlow version handle)
                       writeTVar connVar connState'
                       return (Just $ mkTransition connState connState')
 
@@ -1779,7 +1779,7 @@ withConnectionManager ConnectionManagerArguments {
                 return (Disconnected connId (Just handleError))
 
               Right (handle, version) -> do
-                let dataFlow = connectionDataFlow version
+                let dataFlow = connectionDataFlow version handle
                 -- We can safely overwrite the state: after successful
                 -- `connect` it's not possible to have a race condition
                 -- with any other inbound thread.  We are also guaranteed

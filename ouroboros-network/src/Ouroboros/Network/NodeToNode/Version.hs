@@ -21,6 +21,7 @@ import           Ouroboros.Network.BlockFetch.ClientState
                      (WhetherReceivingTentativeBlocks (..))
 import           Ouroboros.Network.CodecCBORTerm
 import           Ouroboros.Network.Magic
+import           Ouroboros.Network.PeerSelection.Types (PeerSharing (..))
 import           Ouroboros.Network.Protocol.Handshake.Version (Accept (..),
                      Acceptable (..))
 
@@ -48,6 +49,13 @@ data NodeToNodeVersion
     --   NOTE: This is an experimental protocol version, which is not yet
     --   released.  Until initial P2P version it must be kept as the last
     --   version, which allows us to keep it as an experimental version.
+    | NodeToNodeV_11
+    -- ^ Changes:
+    --
+    -- * Adds a new extra parameter to handshake: PeerSharing
+    --   This version is needed to support the new  Peer Sharing miniprotocol
+    --   older versions that are negotiated will appear as not participating
+    --   in Peer Sharing to newer versions.
   deriving (Eq, Ord, Enum, Bounded, Show, Typeable)
 
 nodeToNodeVersionCodec :: CodecCBORTerm (Text, Maybe Int) NodeToNodeVersion
@@ -57,11 +65,13 @@ nodeToNodeVersionCodec = CodecCBORTerm { encodeTerm, decodeTerm }
     encodeTerm NodeToNodeV_8  = CBOR.TInt 8
     encodeTerm NodeToNodeV_9  = CBOR.TInt 9
     encodeTerm NodeToNodeV_10 = CBOR.TInt 10
+    encodeTerm NodeToNodeV_11 = CBOR.TInt 11
 
     decodeTerm (CBOR.TInt 7) = Right NodeToNodeV_7
     decodeTerm (CBOR.TInt 8) = Right NodeToNodeV_8
     decodeTerm (CBOR.TInt 9) = Right NodeToNodeV_9
     decodeTerm (CBOR.TInt 10) = Right NodeToNodeV_10
+    decodeTerm (CBOR.TInt 11) = Right NodeToNodeV_11
     decodeTerm (CBOR.TInt n) = Left ( T.pack "decode NodeToNodeVersion: unknonw tag: "
                                         <> T.pack (show n)
                                     , Just n
@@ -96,6 +106,7 @@ data DiffusionMode
 data NodeToNodeVersionData = NodeToNodeVersionData
   { networkMagic  :: !NetworkMagic
   , diffusionMode :: !DiffusionMode
+  , peerSharing   :: !PeerSharing
   }
   deriving (Show, Typeable, Eq)
   -- 'Eq' instance is not provided, it is not what we need in version
@@ -104,12 +115,14 @@ data NodeToNodeVersionData = NodeToNodeVersionData
 instance Acceptable NodeToNodeVersionData where
     -- | Check that both side use the same 'networkMagic'.  Choose smaller one
     -- from both 'diffusionMode's, e.g. if one is running in 'InitiatorOnlyMode'
-    -- agree on it.
+    -- agree on it. Keep the remote's PeerSharing information PeerSharing
+    -- information.
     acceptableVersion local remote
       | networkMagic local == networkMagic remote
       = Accept NodeToNodeVersionData
           { networkMagic  = networkMagic local
           , diffusionMode = diffusionMode local `min` diffusionMode remote
+          , peerSharing   = peerSharing remote
           }
       | otherwise
       = Refuse $ T.pack $ "version data mismatch: "
@@ -118,18 +131,49 @@ instance Acceptable NodeToNodeVersionData where
 
 
 nodeToNodeCodecCBORTerm :: NodeToNodeVersion -> CodecCBORTerm Text NodeToNodeVersionData
-nodeToNodeCodecCBORTerm _version
+nodeToNodeCodecCBORTerm version
   = let encodeTerm :: NodeToNodeVersionData -> CBOR.Term
-        encodeTerm NodeToNodeVersionData { networkMagic, diffusionMode }
-          = CBOR.TList
-              [ CBOR.TInt (fromIntegral $ unNetworkMagic networkMagic)
-              , CBOR.TBool (case diffusionMode of
-                             InitiatorOnlyDiffusionMode         -> True
-                             InitiatorAndResponderDiffusionMode -> False)
-              ]
+        encodeTerm NodeToNodeVersionData { networkMagic, diffusionMode, peerSharing }
+          = CBOR.TList $
+              case version of
+                NodeToNodeV_11 ->
+                  [ CBOR.TInt (fromIntegral $ unNetworkMagic networkMagic)
+                  , CBOR.TBool (case diffusionMode of
+                                 InitiatorOnlyDiffusionMode         -> True
+                                 InitiatorAndResponderDiffusionMode -> False)
+                  , CBOR.TInt (case peerSharing of
+                                 NoPeerSharing      -> 0
+                                 PeerSharingPrivate -> 1
+                                 PeerSharingPublic  -> 2)
+                  ]
+                _              ->
+                  [ CBOR.TInt (fromIntegral $ unNetworkMagic networkMagic)
+                  , CBOR.TBool (case diffusionMode of
+                                 InitiatorOnlyDiffusionMode         -> True
+                                 InitiatorAndResponderDiffusionMode -> False)
+                  ]
 
-        decodeTerm :: CBOR.Term -> Either Text NodeToNodeVersionData
-        decodeTerm (CBOR.TList [CBOR.TInt x, CBOR.TBool diffusionMode])
+        decodeTerm :: NodeToNodeVersion -> CBOR.Term -> Either Text NodeToNodeVersionData
+        decodeTerm NodeToNodeV_11 (CBOR.TList [CBOR.TInt x, CBOR.TBool diffusionMode, CBOR.TInt peerSharing])
+          | x >= 0
+          , x <= 0xffffffff
+          , peerSharing >= 0
+          , peerSharing <= 2
+          = Right
+              NodeToNodeVersionData {
+                  networkMagic = NetworkMagic (fromIntegral x),
+                  diffusionMode = if diffusionMode
+                                  then InitiatorOnlyDiffusionMode
+                                  else InitiatorAndResponderDiffusionMode,
+                  peerSharing = case peerSharing of
+                                  0 -> NoPeerSharing
+                                  1 -> PeerSharingPrivate
+                                  2 -> PeerSharingPublic
+                                  _ -> error "decodeTerm: impossible happened!"
+                }
+          | otherwise
+          = Left $ T.pack $ "networkMagic out of bound: " <> show x
+        decodeTerm _ (CBOR.TList [CBOR.TInt x, CBOR.TBool diffusionMode])
           | x >= 0
           , x <= 0xffffffff
           = Right
@@ -137,13 +181,16 @@ nodeToNodeCodecCBORTerm _version
                   networkMagic = NetworkMagic (fromIntegral x),
                   diffusionMode = if diffusionMode
                                   then InitiatorOnlyDiffusionMode
-                                  else InitiatorAndResponderDiffusionMode
+                                  else InitiatorAndResponderDiffusionMode,
+                  -- By default older versions do not participate in Peer
+                  -- Sharing, since they do not support the new miniprotocol
+                  peerSharing = NoPeerSharing
                 }
           | otherwise
           = Left $ T.pack $ "networkMagic out of bound: " <> show x
-        decodeTerm t
+        decodeTerm _ t
           = Left $ T.pack $ "unknown encoding: " ++ show t
-    in CodecCBORTerm {encodeTerm, decodeTerm}
+     in CodecCBORTerm {encodeTerm, decodeTerm = decodeTerm version }
 
 
 data ConnectionMode = UnidirectionalMode | DuplexMode

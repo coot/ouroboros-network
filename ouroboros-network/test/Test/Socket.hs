@@ -48,6 +48,7 @@ import           Ouroboros.Network.Util.ShowProxy
 
 import           Test.ChainGenerators (TestBlockChainAndUpdates (..))
 
+import           Ouroboros.Network.PeerSelection.Types (PeerSharing (..))
 import           Test.QuickCheck
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
@@ -165,7 +166,8 @@ demo chain0 updates = withIOManager $ \iocp -> do
         NodeToNodeV_7
         (NodeToNodeVersionData {
           networkMagic  = NetworkMagic 0,
-          diffusionMode = InitiatorAndResponderDiffusionMode })
+          diffusionMode = InitiatorAndResponderDiffusionMode,
+          peerSharing   = NoPeerSharing })
         (SomeResponderApplication responderApp))
       nullErrorPolicies
       $ \realProducerAddress _ -> do
@@ -182,7 +184,8 @@ demo chain0 updates = withIOManager $ \iocp -> do
             NodeToNodeV_7
             (NodeToNodeVersionData {
               networkMagic  = NetworkMagic 0,
-              diffusionMode = InitiatorOnlyDiffusionMode })
+              diffusionMode = InitiatorOnlyDiffusionMode,
+              peerSharing   = NoPeerSharing })
             initiatorApp)
           (Just consumerAddress)
           realProducerAddress)

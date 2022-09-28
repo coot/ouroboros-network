@@ -189,8 +189,8 @@ withBidirectionalConnectionManager
     -- ^ series of request possible to do with the bidirectional connection
     -- manager towards some peer.
     -> (MuxConnectionManager
-          InitiatorResponderMode socket peerAddr
-          UnversionedProtocol ByteString m () ()
+          InitiatorResponderMode socket peerAddr UnversionedProtocol
+          UnversionedProtocolData ByteString m () ()
        -> peerAddr
        -> m a)
     -> m a
@@ -230,7 +230,7 @@ withBidirectionalConnectionManager snocket socket
           cmConfigureSocket = \_ _ -> return (),
           cmTimeWaitTimeout = timeWaitTimeout,
           cmOutboundIdleTimeout = protocolIdleTimeout,
-          connectionDataFlow = const Duplex,
+          connectionDataFlow = \_ _ -> Duplex,
           cmPrunePolicy = simplePrunePolicy,
           cmConnectionsLimits = AcceptedConnectionsLimit {
               acceptedConnectionsHardLimit = maxBound,
@@ -453,7 +453,7 @@ bidirectionalExperiment
           connHandle <-
                 connect 10 connectionManager
           case connHandle of
-            Connected _ _ (Handle mux muxBundle _) -> do
+            Connected _ _ (Handle mux muxBundle _ _) -> do
               traceWith debugTracer ( "initiator-loop"
                                     , "connected"
                                     )
@@ -507,11 +507,11 @@ bidirectionalExperiment
   where
     connect :: Int
             -> MuxConnectionManager InitiatorResponderMode
-                                    socket peerAddr
-                                    UnversionedProtocol ByteString
+                                    socket peerAddr UnversionedProtocol
+                                    UnversionedProtocolData ByteString
                                     IO () ()
             -> IO (Connected peerAddr
-                            (Handle InitiatorResponderMode peerAddr ByteString IO () ())
+                            (Handle InitiatorResponderMode peerAddr UnversionedProtocolData ByteString IO () ())
                             (HandleError InitiatorResponderMode UnversionedProtocol))
     connect n cm | n <= 1 =
       requestOutboundConnection cm remoteAddr

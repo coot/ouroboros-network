@@ -94,11 +94,12 @@ sduHandshakeTimeout = 10
 -- * 'HandleError'
 --                - the multiplexer thrown 'MuxError'.
 --
-data Handle (muxMode :: MuxMode) peerAddr bytes m a b =
+data Handle (muxMode :: MuxMode) peerAddr versionData bytes m a b =
     Handle {
         hMux            :: !(Mux muxMode m),
         hMuxBundle      :: !(MuxBundle muxMode bytes m a b),
-        hControlMessage :: !(TemperatureBundle (StrictTVar m ControlMessage))
+        hControlMessage :: !(TemperatureBundle (StrictTVar m ControlMessage)),
+        hVersionData    :: !versionData
       }
 
 
@@ -148,16 +149,16 @@ type MuxConnectionHandler muxMode socket peerAddr versionNumber versionData byte
                       (ConnectionHandlerTrace versionNumber versionData)
                       socket
                       peerAddr
-                      (Handle muxMode peerAddr bytes m a b)
+                      (Handle muxMode peerAddr versionData bytes m a b)
                       (HandleError muxMode versionNumber)
-                      (versionNumber, versionData)
+                      versionNumber
                       m
 
 -- | Type alias for 'ConnectionManager' using 'Handle'.
 --
-type MuxConnectionManager muxMode socket peerAddr versionNumber bytes m a b =
+type MuxConnectionManager muxMode socket peerAddr versionNumber versionData bytes m a b =
     ConnectionManager muxMode socket peerAddr
-                      (Handle muxMode peerAddr bytes m a b)
+                      (Handle muxMode peerAddr versionData bytes m a b)
                       (HandleError muxMode versionNumber)
                       m
 
@@ -237,9 +238,9 @@ makeConnectionHandler muxTracer singMuxMode
       => ConnectionHandlerFn (ConnectionHandlerTrace versionNumber versionData)
                              socket
                              peerAddr
-                             (Handle muxMode peerAddr ByteString m a b)
+                             (Handle muxMode peerAddr versionData ByteString m a b)
                              (HandleError muxMode versionNumber)
-                             (versionNumber, versionData)
+                             versionNumber
                              m
     outboundConnectionHandler socket
                               PromiseWriter { writePromise }
@@ -291,9 +292,10 @@ makeConnectionHandler muxTracer singMuxMode
                   let !handle = Handle {
                           hMux            = mux,
                           hMuxBundle      = muxBundle,
-                          hControlMessage = controlMessageBundle
+                          hControlMessage = controlMessageBundle,
+                          hVersionData    = agreedOptions
                         }
-                  atomically $ writePromise (Right (handle, (versionNumber, agreedOptions)))
+                  atomically $ writePromise (Right (handle, versionNumber))
                   bearer <- mkMuxBearer sduTimeout socket
                   runMux (WithMuxBearer connectionId `contramap` muxTracer)
                          mux bearer
@@ -304,9 +306,9 @@ makeConnectionHandler muxTracer singMuxMode
       => ConnectionHandlerFn (ConnectionHandlerTrace versionNumber versionData)
                              socket
                              peerAddr
-                             (Handle muxMode peerAddr ByteString m a b)
+                             (Handle muxMode peerAddr versionData ByteString m a b)
                              (HandleError muxMode versionNumber)
-                             (versionNumber, versionData)
+                             versionNumber
                              m
     inboundConnectionHandler socket
                              PromiseWriter { writePromise }
@@ -358,9 +360,10 @@ makeConnectionHandler muxTracer singMuxMode
                   let !handle = Handle {
                           hMux            = mux,
                           hMuxBundle      = muxBundle,
-                          hControlMessage = controlMessageBundle
+                          hControlMessage = controlMessageBundle,
+                          hVersionData    = agreedOptions
                         }
-                  atomically $ writePromise (Right (handle, (versionNumber, agreedOptions)))
+                  atomically $ writePromise (Right (handle, versionNumber))
                   bearer <- mkMuxBearer sduTimeout socket
                   runMux (WithMuxBearer connectionId `contramap` muxTracer)
                              mux bearer
