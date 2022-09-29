@@ -11,6 +11,7 @@ module Test.Ouroboros.Network.PeerSelection.PeerGraph
   , GovernorScripts (..)
   , PeerShareScript
   , ConnectionScript
+  , PeerSharingScript
   , AsyncDemotion (..)
   , PeerShareTime (..)
   , interpretPeerShareTime
@@ -39,6 +40,7 @@ import           Ouroboros.Network.Testing.Utils (prop_shrink_nonequal,
 import           Test.Ouroboros.Network.PeerSelection.Instances
 import           Test.Ouroboros.Network.ShrinkCarefully
 
+import           Ouroboros.Network.PeerSelection.Types (PeerSharing)
 import           Test.QuickCheck
 
 
@@ -58,8 +60,9 @@ newtype PeerGraph = PeerGraph [(PeerAddr, [PeerAddr], PeerInfo)]
 type PeerInfo = GovernorScripts
 
 data GovernorScripts = GovernorScripts {
-    peerShareScript  :: PeerShareScript,
-    connectionScript :: ConnectionScript
+    peerShareScript   :: PeerShareScript,
+    connectionScript  :: ConnectionScript,
+    peerSharingScript :: PeerSharingScript
   }
   deriving (Eq, Show)
 
@@ -99,7 +102,10 @@ data AsyncDemotion = ToWarm
                    | Noop
   deriving (Eq, Show)
 
-
+-- | PeerSharing script is the script which provides PeerSharing values
+-- when a new connection is established.
+--
+type PeerSharingScript = Script PeerSharing
 
 -- | Invariant. Used to check the QC generator and shrinker.
 --
@@ -209,16 +215,21 @@ instance Arbitrary GovernorScripts where
     arbitrary = GovernorScripts
             <$> arbitrary
             <*> (fixConnectionScript <$> arbitrary)
-    shrink GovernorScripts { peerShareScript, connectionScript } =
-      [ GovernorScripts peerShareScript' connectionScript
+            <*> arbitrary
+    shrink GovernorScripts { peerShareScript, connectionScript, peerSharingScript } =
+      [ GovernorScripts peerShareScript' connectionScript peerSharingScript
       | peerShareScript' <- shrink peerShareScript
       ]
       ++
-      [ GovernorScripts peerShareScript connectionScript'
+      [ GovernorScripts peerShareScript connectionScript' peerSharingScript
       | connectionScript' <- map fixConnectionScript (shrink connectionScript)
         -- fixConnectionScript can result in re-creating the same script
         -- which would cause shrinking to loop. Filter out such cases.
       , connectionScript' /= connectionScript
+      ]
+      ++
+      [ GovernorScripts peerShareScript connectionScript peerSharingScript'
+      | peerSharingScript' <- shrink peerSharingScript
       ]
 
 -- | We ensure that eventually the connection script will allow to connect to
@@ -243,7 +254,8 @@ instance Arbitrary PeerGraph where
                         | (from, to) <- edges ]
       graph <- sequence [ do peerShareScript <- arbitraryPeerShareScript outedges
                              connectionScript <- fixConnectionScript <$> arbitrary
-                             let node = GovernorScripts { peerShareScript, connectionScript }
+                             peerSharingScript <- arbitrary
+                             let node = GovernorScripts { peerShareScript, connectionScript, peerSharingScript }
                              return (PeerAddr n, outedges, node)
                         | n <- [0..numNodes-1]
                         , let outedges = maybe [] Set.toList
@@ -287,12 +299,13 @@ prunePeerGraphEdges :: [(PeerAddr, [PeerAddr], PeerInfo)]
 prunePeerGraphEdges graph =
     [ (nodeaddr, edges', node)
     | let nodes   = Set.fromList [ nodeaddr | (nodeaddr, _, _) <- graph ]
-    , (nodeaddr, edges, GovernorScripts { peerShareScript = Script peershare, connectionScript }) <- graph
+    , (nodeaddr, edges, GovernorScripts { peerShareScript = Script peershare, connectionScript, peerSharingScript }) <- graph
     , let edges'  = pruneEdgeList nodes edges
           peershare' = prunePeerShareScript (Set.fromList edges') peershare
           node    = GovernorScripts {
                         peerShareScript = Script peershare',
-                        connectionScript
+                        connectionScript,
+                        peerSharingScript
                       }
     ]
   where

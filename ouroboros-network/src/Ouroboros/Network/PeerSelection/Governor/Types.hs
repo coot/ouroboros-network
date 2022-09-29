@@ -193,6 +193,15 @@ data PeerSelectionActions peeraddr peerconn m = PeerSelectionActions {
        --
        readPeerSharing :: STM m PeerSharing,
 
+       -- | Get a PeerSharing value from 'peerconn'
+       --
+       -- 'peerconn' ideally comes from a call to 'establishPeerConnection'.
+       -- This will establish a connection and perform handshake. The returned
+       -- 'peerconn' has all the versionData negotiated in the handshake,
+       -- including the remote peer's 'PeerSharing' willingness information.
+       --
+       peerConnToPeerSharing :: peerconn -> PeerSharing,
+
        -- | Request a sample of public root peers.
        --
        -- It is intended to cover use cases including:

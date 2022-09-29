@@ -21,8 +21,7 @@ import           Control.Monad.Class.MonadTimer
 
 import qualified Ouroboros.Network.PeerSelection.EstablishedPeers as EstablishedPeers
 import           Ouroboros.Network.PeerSelection.Governor.Types
-import           Ouroboros.Network.PeerSelection.KnownPeers
-                     (isLedgerPeer)
+import           Ouroboros.Network.PeerSelection.KnownPeers (isLedgerPeer)
 import qualified Ouroboros.Network.PeerSelection.KnownPeers as KnownPeers
 import           Ouroboros.Network.PeerSelection.LedgerPeers (LedgerPeer (..))
 import qualified Ouroboros.Network.PeerSelection.LocalRootPeers as LocalRootPeers

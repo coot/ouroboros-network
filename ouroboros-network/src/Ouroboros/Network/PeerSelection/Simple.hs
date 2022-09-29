@@ -78,6 +78,7 @@ withPeerSelectionActions
             readPeerSelectionTargets = readTargets,
             readLocalRootPeers = toList <$> readTVar localRootsVar,
             readPeerSharing = return NoPeerSharing, -- TODO: Make this dynamic
+            peerConnToPeerSharing = const NoPeerSharing, -- TODO: Fix this
             requestPublicRootPeers = requestPublicRootPeers,
             requestPeerShare = \_ -> pure [],
             peerStateActions

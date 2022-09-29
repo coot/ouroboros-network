@@ -234,7 +234,8 @@ jobPromoteColdPeer :: forall peeraddr peerconn m.
                    -> peeraddr
                    -> Job () m (Completion m peeraddr peerconn)
 jobPromoteColdPeer PeerSelectionActions {
-                     peerStateActions = PeerStateActions {establishPeerConnection}
+                     peerStateActions = PeerStateActions {establishPeerConnection},
+                     peerConnToPeerSharing
                    } peeraddr =
     Job job handler () "promoteColdPeer"
   where
@@ -283,6 +284,8 @@ jobPromoteColdPeer PeerSelectionActions {
       --TODO: decide if we should do timeouts here or if we should make that
       -- the responsibility of establishPeerConnection
       peerconn <- establishPeerConnection peeraddr
+      let peerSharing = peerConnToPeerSharing peerconn
+
       return $ Completion $ \st@PeerSelectionState {
                                establishedPeers,
                                knownPeers,
@@ -297,6 +300,10 @@ jobPromoteColdPeer PeerSelectionActions {
                                     KnownPeers.resetFailCount
                                         peeraddr
                                         knownPeers
+            -- Update PeerSharing value in KnownPeers
+            knownPeers''      = KnownPeers.updatePeerSharing peeraddr
+                                                             (Just peerSharing)
+                                                             knownPeers'
 
         in Decision {
              decisionTrace = TracePromoteColdDone targetNumberOfEstablishedPeers
@@ -306,7 +313,7 @@ jobPromoteColdPeer PeerSelectionActions {
                                establishedPeers      = establishedPeers',
                                inProgressPromoteCold = Set.delete peeraddr
                                                          (inProgressPromoteCold st),
-                               knownPeers            = knownPeers'
+                               knownPeers            = knownPeers''
                              },
              decisionJobs  = []
            }
