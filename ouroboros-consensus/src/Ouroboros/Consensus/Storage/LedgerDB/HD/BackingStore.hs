@@ -20,6 +20,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.HD.BackingStore (
   , TVarBackingStoreDeserialiseExn (..)
   , TVarBackingStoreValueHandleClosedExn (..)
   , newTVarBackingStore
+  , newTVarBackingStore'
     -- * A trivial backing store
   , trivialBackingStore
   ) where
@@ -190,7 +191,27 @@ newTVarBackingStore ::
           values
           diff
        )
-newTVarBackingStore lookup_ rangeRead_ forwardValues_ enc dec initialization = do
+newTVarBackingStore lookup_ rangeRead_ forwardValues_ enc dec initialization =
+  fmap snd $ newTVarBackingStore' lookup_ rangeRead_ forwardValues_ enc dec initialization
+
+-- | Use a 'TVar' as a trivial backing store
+newTVarBackingStore' ::
+     (IOLike m, NoThunks values)
+  => (keys -> values -> values)
+  -> (RangeQuery keys -> values -> values)
+  -> (values -> diff -> values)
+  -> (values -> CBOR.Encoding)
+  -> (forall s. CBOR.Decoder s values)
+  -> Either
+       (FS.SomeHasFS m, BackingStorePath)
+       (WithOrigin SlotNo, values)   -- ^ initial seqno and contents
+  -> m (m (Maybe (WithOrigin SlotNo, values))
+       , BackingStore m
+          keys
+          values
+          diff
+       )
+newTVarBackingStore' lookup_ rangeRead_ forwardValues_ enc dec initialization = do
     ref <- do
       (slot, values) <- case initialization of
         Left (FS.SomeHasFS fs, BackingStorePath path) -> do
@@ -207,7 +228,12 @@ newTVarBackingStore lookup_ rangeRead_ forwardValues_ enc dec initialization = d
                 pure x
         Right x -> pure x
       IOLike.newTVarIO $ TVarBackingStoreContents slot values
-    pure BackingStore {
+    let f = do
+          s <- IOLike.atomically $ IOLike.readTVar ref
+          case s of
+            TVarBackingStoreContentsClosed -> pure Nothing
+            TVarBackingStoreContents sl t -> pure $ Just (sl, t)
+    pure (f, BackingStore {
         bsClose    = IOLike.atomically $ do
           IOLike.writeTVar ref TVarBackingStoreContentsClosed
       , bsCopy = \(FS.SomeHasFS fs) (BackingStorePath path) ->
@@ -252,7 +278,7 @@ newTVarBackingStore lookup_ rangeRead_ forwardValues_ enc dec initialization = d
                     (At slot2)
                     (forwardValues_ values diff)
                 pure $ pure ()
-      }
+      })
   where
     extendPath path =
       FS.fsPathFromList $ FS.fsPathToList path <> [fromString "tvar"]

@@ -122,6 +122,7 @@ mkMempool mpEnv = Mempool
     , getSnapshotFor = implGetSnapshotFor mpEnv
     , getCapacity    = isCapacity <$> readTMVar istate
     , getTxSize      = txSize
+    , unsafeGetMempoolState = isLedgerState <$> atomically (readTMVar istate)
     }
   where
     MempoolEnv {
@@ -409,7 +410,7 @@ implGetSnapshotFor ::
   -> SlotNo
   -> TickedLedgerState blk DiffMK
   -> MempoolChangelog blk
-  -> m (MempoolSnapshot blk TicketNo)
+  -> m (Maybe (MempoolSnapshot blk TicketNo))
 implGetSnapshotFor mpEnv slot ticked mempoolCh = do
   res <- atomically $ do
     is <- readTMVar istate
@@ -423,10 +424,12 @@ implGetSnapshotFor mpEnv slot ticked mempoolCh = do
         -- We need to revalidate the transactions.
         pure $ Right is
   case res of
-    Left snap -> pure snap
+    Left snap -> pure $ Just snap
     Right is ->
-      forward_ mpEnv mempoolCh (TxSeq.toList $ isTxs is)
+      fullForward mpEnv mempoolCh (map (txForgetValidated. txTicketTx) $ TxSeq.toList $ isTxs is)
+               ( pure Nothing )
                ( pure
+               . Just
                . pureGetSnapshotFor cfg capacityOverride is (ForgeInKnownSlot slot ticked)
                )
   where

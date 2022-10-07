@@ -182,7 +182,7 @@ data Mempool m blk idx = Mempool {
            SlotNo
         -> TickedLedgerState blk DiffMK
         -> MempoolChangelog blk
-        -> m (MempoolSnapshot blk idx)
+        -> m (Maybe (MempoolSnapshot blk idx))
 
       -- | Get the mempool's capacity in bytes.
       --
@@ -200,6 +200,8 @@ data Mempool m blk idx = Mempool {
 
       -- | Return the post-serialisation size in bytes of a 'GenTx'.
     , getTxSize      :: GenTx blk -> TxSizeInBytes
+
+    , unsafeGetMempoolState :: m (TickedLedgerState blk DiffMK)
     }
 
 -- | Wrapper around 'implTryAddTxs' that blocks until all transaction have

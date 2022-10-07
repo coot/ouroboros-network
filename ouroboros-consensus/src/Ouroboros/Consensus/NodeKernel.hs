@@ -34,7 +34,7 @@ import           Data.Hashable (Hashable)
 import           Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
-import           Data.Maybe (isJust, mapMaybe)
+import           Data.Maybe (isJust, mapMaybe, fromJust)
 import           Data.Proxy
 import qualified Data.Text as Text
 import           System.Random (StdGen)
@@ -401,7 +401,7 @@ forkBlockForging IS{..} blockForging =
                              tickedLedgerState
                              dbch
 
-          pure ( mempoolSnapshot
+          pure ( fromJust mempoolSnapshot -- We can do this because we have the read lock
                , bcPrevPoint
                , mempoolHash
                , mempoolSlotNo

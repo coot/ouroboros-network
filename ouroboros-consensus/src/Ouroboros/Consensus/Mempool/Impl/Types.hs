@@ -613,4 +613,5 @@ data MempoolSnapshot blk idx = MempoolSnapshot {
   , snapshotSlotNo      :: SlotNo
 
   , snapshotTipHash     :: ChainHash blk
+  , snapshotNextTicket  :: idx
   }

@@ -156,6 +156,7 @@ test-suite test-consensus
                        Test.Consensus.MiniProtocol.ChainSync.Client
                        Test.Consensus.MiniProtocol.LocalStateQuery.Server
                        Test.Consensus.Mempool
+                       Test.Consensus.Mempool.State
                        Test.Consensus.Node
                        Test.Consensus.ResourceRegistry
                        Test.Consensus.Util.MonadSTM.RAWLock
@@ -177,6 +178,7 @@ test-suite test-consensus
                      , nothunks
                      , QuickCheck
                      , quickcheck-state-machine
+                     , strict-stm
                      , quiet
                      , serialise
                      , sop-core

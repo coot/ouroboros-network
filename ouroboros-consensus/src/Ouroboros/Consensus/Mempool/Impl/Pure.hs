@@ -234,6 +234,7 @@ implSnapshotFromIS is = MempoolSnapshot {
     , snapshotMempoolSize = implSnapshotGetMempoolSize is
     , snapshotSlotNo      = isSlotNo                   is
     , snapshotTipHash     = isTip                      is
+    , snapshotNextTicket  = succ $ isLastTicketNo   is
     }
  where
   implSnapshotGetTxs :: InternalState blk
