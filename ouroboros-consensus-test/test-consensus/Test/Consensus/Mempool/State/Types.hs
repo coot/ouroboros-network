@@ -187,6 +187,7 @@ data Model blk (r :: Type -> Type) =
         -- | A mocking backing store
       , modelBackingStore :: !(MockLedgerDB blk)
 
+      , modelCapacity     :: !MempoolCapacityBytes
         -- | This might hols a new LedgerDB if we have to resync. Further
         -- unsyncs will modify this value.
       , modelNextSync :: !(Maybe (MockLedgerDB blk))

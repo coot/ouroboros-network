@@ -45,6 +45,7 @@ generator ::
   )
   => Model blk Symbolic
   -> Maybe (Gen (Action blk Symbolic))
+  -- FIXME: @js redo these generators
 generator = \case
   NeedsInit -> Just $ Init <$> arbitrary
   Model{}   -> Just $ frequency $
@@ -56,6 +57,7 @@ generator = \case
    , (1, pure SyncLedger)
    ]
 
+-- TODO: @js fill this shrinker
 shrinker :: Model blk Symbolic -> Action blk Symbolic -> [Action blk Symbolic]
 shrinker _ _ = []
 
@@ -67,7 +69,7 @@ preconditions NeedsInit _      = Bot
 preconditions Model{}   Init{} = Bot
 preconditions Model{}   _      = Top
 
-
+-- TODO: @js Add postconditions
 postconditions :: p -> p1 -> p2 -> Logic
 postconditions _ _ _ = Top
 

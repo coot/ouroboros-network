@@ -11,6 +11,7 @@ import           Control.Monad.Trans.Except (runExcept)
 import           Data.Foldable
 import qualified Data.List.NonEmpty as NE
 import           Data.Maybe (fromJust)
+import           Data.Word
 
 import           Cardano.Slotting.Slot
 
@@ -36,52 +37,53 @@ transitions :: ( IsLedger (LedgerState blk)
                , Eq (GenTx blk)
                )
             => LedgerConfig blk
-            -> Model blk r
-            -> Action blk r
-            -> Response blk r
-            -> Model blk r
+ -> Model blk r
+ -> Action blk r
+ -> Response blk r
+ -> Model blk r
 transitions cfg model cmd resp =
   case (model, cmd, resp) of
     (NeedsInit, Init st, ResponseOk) ->
       let slot = withOrigin' (pointSlot $ getTip st)
-          st' = tickSt cfg (slot + 1) st
-      in Model TxSeq.Empty st' TxSeq.zeroTicketNo (MockLedgerDB (forgetLedgerTables st) ((slot, projectLedgerTables st) NE.:| [])) Nothing
+          st'  = tickSt cfg (slot + 1) st
+      in Model TxSeq.Empty st' TxSeq.zeroTicketNo (MockLedgerDB (forgetLedgerTables st) ((slot, projectLedgerTables st) NE.:| [])) (computeMempoolCapacity st' NoMempoolCapacityBytesOverride) Nothing
 
-    (NeedsInit, _, _) -> error "unreachable"
+    (NeedsInit, _, _)        -> error "unreachable"
 
-    (_, GetSnapshot, _) -> model
+    (_, GetSnapshot, _)      -> model
     (_, GetSnapshotFor{}, _) -> model
 
-    (Model _ _ _ _ Nothing, SyncLedger, ResponseOk) -> model
-    (Model _ _ _ _ (Just m), SyncLedger, ResponseOk) -> model { modelBackingStore = m }
-    (Model txs _ _ _ (Just m), SyncLedger, SyncOk st' removed) ->
+    (Model _ _ _ _ _ Nothing, SyncLedger, ResponseOk)  -> model
+    (Model _ _ _ _ _ (Just m), SyncLedger, ResponseOk) -> model { modelBackingStore = m }
+    (Model txs _ _ _ _ (Just m), SyncLedger, SyncOk st' removed) ->
       let txs' = TxSeq.fromList [ t | t <- TxSeq.toList txs, txForgetValidated (txTicketTx t) `notElem` removed ]
           st'' = st' `withLedgerTablesTicked` zfwd (snd $ NE.last $ mockTables m) (projectLedgerTablesTicked st')
       in model { modelTxs = txs'
                , modelState = st''
                , modelBackingStore = m
                , modelNextSync = Nothing
+               , modelCapacity = computeMempoolCapacity st'' NoMempoolCapacityBytesOverride
                }
 
-    (Model _ _ _ _ s, TryAddTxs _, RespTryAddTxs st' tk' added _ removed) ->
+    (Model _ _ _ _ _ s, TryAddTxs _, RespTryAddTxs st' tk' added _ removed) ->
       let model' = case s of
-                     Nothing -> model
+                     Nothing                                             -> model
                      Just s'
                        | mockTip s' == mockTip (modelBackingStore model) -> model
-                       | otherwise -> transitions cfg model SyncLedger (SyncOk st' removed)
-          txs' = foldl' (TxSeq.:>) (modelTxs model') [ t | MempoolTxAddedPlus t <- added ]
+                       | otherwise                                       -> transitions cfg model SyncLedger (SyncOk st' removed)
+          txs'             = foldl' (TxSeq.:>) (modelTxs model') [ t | MempoolTxAddedPlus t <- added ]
       in model' { modelTxs = txs', modelTicket = tk' }
 
-    (Model _ _ _ _ Nothing, UnsyncAnchor w, ResponseOk) ->
+    (Model _ _ _ _ _ Nothing, UnsyncAnchor w, ResponseOk) ->
       let newTables = fromJust $ NE.nonEmpty $ NE.drop (fromIntegral w) $ mockTables $ modelBackingStore model
       in model { modelNextSync = Just $ (modelBackingStore model) { mockTables = newTables } }
-    (Model _ _ _ _ (Just s), UnsyncAnchor w, ResponseOk) ->
+    (Model _ _ _ _ _ (Just s), UnsyncAnchor w, ResponseOk) ->
       let newTables = fromJust $ NE.nonEmpty $ NE.drop (fromIntegral w) $ mockTables s
       in model { modelNextSync = Just $ (modelBackingStore model) { mockTables = newTables } }
-    (Model _ _ _ _ Nothing, UnsyncTip tip diffs, ResponseOk) ->
-      let newTables = NE.reverse $ foldl' (\acc (s, d) -> (s, zfwd (snd $ NE.head acc) d) NE.<| acc) (NE.head (mockTables $ modelBackingStore model) NE.:| []) (NE.toList diffs)
+    (Model _ _ _ _ _ Nothing, UnsyncTip tip diffs, ResponseOk) ->
+      let newTables = NE.reverse $ foldl' (\acc (s, d)  -> (s, zfwd (snd $ NE.head acc) d) NE.<| acc) (NE.head (mockTables $ modelBackingStore model) NE.:| []) (NE.toList diffs)
       in model { modelNextSync = Just $ MockLedgerDB tip newTables }
-    (Model _ _ _ _ (Just s), UnsyncTip tip diffs, ResponseOk) ->
+    (Model _ _ _ _ _ (Just s), UnsyncTip tip diffs, ResponseOk) ->
       let newTables = NE.reverse $ foldl' (\acc (sl, d) -> (sl, zfwd (snd $ NE.head acc) d) NE.<| acc) (NE.head (mockTables s) NE.:| []) (NE.toList diffs)
       in model { modelNextSync = Just $ MockLedgerDB tip newTables }
 
@@ -95,39 +97,41 @@ mock :: LedgerSupportsMempool blk
 mock cfg model action = case (model, action) of
   (NeedsInit, Init _) -> pure ResponseOk
 
-  (Model _ _ _ _ Nothing, SyncLedger) -> pure ResponseOk
-  (Model txs _ _ (MockLedgerDB oldTip _) (Just (MockLedgerDB tip tbs)), SyncLedger) ->
+  (Model _ _ _ _ _ Nothing, SyncLedger) -> pure ResponseOk
+  (Model txs _ _ (MockLedgerDB oldTip _) _ (Just (MockLedgerDB tip tbs)), SyncLedger) ->
     if oldTip == tip
     then pure ResponseOk
     else do
-      let slot   = withOrigin' (pointSlot $ getTip tip)
-          ticked = tickSt cfg (slot + 1) (tip `withLedgerTables` snd (NE.last tbs))
+      let slot                 = withOrigin' (pointSlot $ getTip tip)
+          ticked               = tickSt cfg (slot + 1) (tip `withLedgerTables` snd (NE.last tbs))
           (applied, processed) = foldTxs' cfg (ticked, []) [ txForgetValidated $ TxSeq.txTicketTx tx | tx <- TxSeq.toList txs ]
-          diffed = forgetLedgerTablesValuesTicked $ calculateDifferenceTicked ticked applied
-      pure $ SyncOk diffed [ tx | MempoolTxRejected tx _ <- processed ]
+          diffed               = forgetLedgerTablesValuesTicked $ calculateDifferenceTicked ticked applied
+      pure $ SyncOk diffed [ tx | MempoolTxRejected tx _                                                  <- processed ]
 
-  (Model _ st tk bkst toSync, TryAddTxs txs') -> do
+  (Model txs st tk bkst cap toSync, TryAddTxs txs')                -> do
     resp <- mock cfg model SyncLedger
+    let cap' = getMempoolCapacityBytes cap - sum [ txInBlockSize t | t' <- TxSeq.toList txs, let t = txForgetValidated $ txTicketTx t' ]
     case (resp, toSync) of
-      (ResponseOk, _) -> do
-        let (tk', st', processed, pending) = foldTxs cfg (tk, st, [], []) txs'
-            st'' = st' `withLedgerTablesTicked` zdiff (snd $ NE.last $ mockTables bkst) (projectLedgerTablesTicked st')
+      (ResponseOk, _)                                          -> do
+        let (tk', st', processed, pending)     = foldTxs cfg cap' (tk, st, []) txs'
+            st''                               = st' `withLedgerTablesTicked` zdiff (snd $ NE.last $ mockTables bkst) (projectLedgerTablesTicked st')
         pure $ RespTryAddTxs st'' tk' processed pending []
       (SyncOk synced removed, Just (MockLedgerDB _ newTables)) -> do
-        let synced' = synced `withLedgerTablesTicked` zfwd (snd $ NE.last newTables) (projectLedgerTablesTicked synced)
-            (tk', applied, processed, pending) = foldTxs cfg (tk, synced', [], []) txs'
+        let synced'                            = synced `withLedgerTablesTicked` zfwd (snd $ NE.last newTables) (projectLedgerTablesTicked synced)
+            cap'' = cap' + sum [ txInBlockSize t | t <- removed ]
+            (tk', applied, processed, pending) = foldTxs cfg cap'' (tk, synced', []) txs'
             diffed = applied `withLedgerTablesTicked` zdiff (snd $ NE.last newTables) (projectLedgerTablesTicked applied)
         pure $ RespTryAddTxs diffed tk' processed pending removed
       _ -> error "unreachable"
 
-  (Model txs _ _ _ _ , GetSnapshot) ->
+  (Model txs _ _ _ _ _, GetSnapshot) ->
     pure $ Snapshot [ (TxSeq.txTicketTx tx, TxSeq.txTicketNo tx) | tx <- TxSeq.toList txs]
 
-  (Model txs _ _ m Nothing, GetSnapshotFor st mch) -> do
+  (Model txs _ _ m _ Nothing, GetSnapshotFor st mch) -> do
     let st' = st `withLedgerTablesTicked` zipLedgerTables fwd' (snd $ NE.head $ mockTables m) (mcDifferences mch)
         (_, processed) = foldTxs' cfg (st', []) [ txForgetValidated $ TxSeq.txTicketTx tx | tx <- TxSeq.toList txs ]
-    pure $ SnapshotFor $ Just [ tx | MempoolTxAdded tx <- processed ]
-  (Model _ _ _ _ _, GetSnapshotFor{}) -> pure $ SnapshotFor Nothing
+    pure $ SnapshotFor $ Just [ tx | MempoolTxAdded tx                                         <- processed ]
+  (Model _ _ _ _ _ _, GetSnapshotFor{}) -> pure $ SnapshotFor Nothing
 
   (Model{}, UnsyncTip{})    -> pure ResponseOk
   (Model{}, UnsyncAnchor{}) -> pure ResponseOk
@@ -154,10 +158,10 @@ tickSt cfg s st = zipOverLedgerTablesTicked f st' (projectLedgerTables st)
 -- | Increments the ticket number on each valid transaction. More or less equivalent to 'fold extendVRNew'
 foldTxs :: LedgerSupportsMempool blk
         => LedgerConfig blk
+        -> Word32
         -> ( TicketNo
            , TickedLedgerState blk ValuesMK
            , [MempoolAddTxResultPlus blk]
-           , [GenTx blk]
            )
         -> [GenTx blk]
         -> ( TicketNo
@@ -165,15 +169,16 @@ foldTxs :: LedgerSupportsMempool blk
            , [MempoolAddTxResultPlus blk]
            , [GenTx blk]
            )
--- TODO mempool can be full, so we might leave txs in pending
-foldTxs _ st [] = st
-foldTxs cfg (tk, st, processed, pending) (tx:txs) =
+foldTxs _ _ (tk, st, processed) [] = (tk, st, processed, [])
+foldTxs cfg cap (tk, st, processed) (tx:txs) =
+  if cap < txInBlockSize tx then (tk, st, processed, tx:txs)
+  else
   case runExcept (applyTx cfg DoNotIntervene (withOrigin' $ pointSlot $ getTip st) tx st) of
-    Left _ -> foldTxs cfg (tk, st, processed ++ [MempoolTxRejectedPlus tx], pending) txs
-    Right (st', vtx) -> foldTxs cfg ( succ tk
+    Left _ -> foldTxs cfg cap (tk, st, processed ++ [MempoolTxRejectedPlus tx]) txs
+    Right (st', vtx) -> foldTxs cfg (cap - txInBlockSize tx) ( succ tk
                                     , forgetLedgerTablesDiffsTicked st'
                                     , processed ++ [MempoolTxAddedPlus (TxSeq.TxTicket vtx tk (txInBlockSize tx))]
-                                    , pending) txs
+                                    ) txs
 
 -- | More or less equivalent to 'fold extendVRPrevApplied'
 foldTxs' :: LedgerSupportsMempool blk

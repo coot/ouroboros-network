@@ -32,10 +32,10 @@ import           Test.StateMachine
 import           Test.Consensus.Mempool.State.Types
 
 -- | A mock LedgerDB that has the bare minimum to fulfill the LedgerInterface
-data TestLedgerDB m blk = TestLedgerDB
-    { testBackingStore :: !(LedgerBackingStore m (ExtLedgerState blk))
-    , testLedgerDB     :: !(StrictTMVar m (LedgerState blk EmptyMK, MempoolChangelog blk))
-    }
+data TestLedgerDB m blk =
+  TestLedgerDB
+    !(LedgerBackingStore m (ExtLedgerState blk))
+    !(StrictTMVar m (LedgerState blk EmptyMK, MempoolChangelog blk))
 
 newLedgerInterface ::
   ( IOLike m
@@ -56,19 +56,17 @@ newLedgerInterface st = do
              , withReadLock                 = id
              })
 
-mempoolState :: Mempool m blk TicketNo -> m (TickedLedgerState blk DiffMK)
-mempoolState = undefined
-
-semantics :: ( LedgerSupportsMempool blk
-             , LedgerSupportsProtocol blk
-             , HasTxId (GenTx blk)
-             , Eq (GenTx blk)
-             , SufficientSerializationForAnyBackingStore (LedgerState blk)
-             )
-          => LedgerConfig blk
-          -> IORef (Mempool IO blk TicketNo, TestLedgerDB IO blk)
-          -> Action blk Concrete
-          -> IO (Response blk Concrete)
+semantics ::
+  ( LedgerSupportsMempool blk
+  , LedgerSupportsProtocol blk
+  , HasTxId (GenTx blk)
+  , Eq (GenTx blk)
+  , SufficientSerializationForAnyBackingStore (LedgerState blk)
+  )
+  => LedgerConfig blk
+  -> IORef (Mempool IO blk TicketNo, TestLedgerDB IO blk)
+  -> Action blk Concrete
+  -> IO (Response blk Concrete)
 semantics cfg ref = \case
   Init st -> do
     (testDb, iface) <- newLedgerInterface st
@@ -108,7 +106,7 @@ semantics cfg ref = \case
                             MempoolTxRejected t' _ -> MempoolTxRejectedPlus t'
                         | t <- processed
                         ]
-    st <- mempoolState mp
+    st <- unsafeGetMempoolState mp
     pure $ RespTryAddTxs st (snapshotNextTicket snap) processedPlus pending removed
 
   SyncLedger -> do
@@ -118,7 +116,7 @@ semantics cfg ref = \case
     -- Peforming the sync with ledger, which happens to return the resulting snapshot, so we extract the new transactions
     txs' <- map (txForgetValidated . fst) . snapshotTxs <$> syncWithLedger mp
 
-    st' <- mempoolState mp
+    st' <- unsafeGetMempoolState mp
     -- The difference are the transactions that have been removed
     pure $ SyncOk st' [ t' | (t, _) <- txs
                            , let t' = txForgetValidated t
@@ -139,14 +137,15 @@ semantics cfg ref = \case
     (s, chlog) <- atomically $ takeTMVar stv
     let split :: Ord k => SeqDiffMK k v -> (SeqDiffMK k v, SeqDiffMK k v)
         split (ApplySeqDiffMK sq)       = bimap ApplySeqDiffMK ApplySeqDiffMK $ splitAtSeqUtxoDiff (fromIntegral w) sq
-        getLastSlot :: Ord k => SeqDiffMK k v -> [SlotNo]
-        getLastSlot (ApplySeqDiffMK sq) = [fromJust $ slotSeqUtxoDiff sq]
         toFlush                         = mapLedgerTables (fst . split) $ mcDifferences chlog
         toKeep                          = mapLedgerTables (snd . split) $ mcDifferences chlog
+        getLastSlot :: Ord k => SeqDiffMK k v -> [SlotNo]
+        getLastSlot (ApplySeqDiffMK sq) = [fromJust $ slotSeqUtxoDiff sq]
         slot                            = head $ foldLedgerTables getLastSlot toKeep
+        prj :: Ord k => SeqDiffMK k v -> DiffMK k v
+        prj (ApplySeqDiffMK sq) = ApplyDiffMK $ cumulativeDiffSeqUtxoDiff sq
 
     bsWrite bs slot $ mapLedgerTables prj $ ExtLedgerStateTables toFlush
-
     atomically $ putTMVar stv (s, MempoolChangelog (At slot) toKeep)
     pure ResponseOk
 
@@ -156,10 +155,3 @@ semantics cfg ref = \case
         ext sl (ApplySeqDiffMK sq) (ApplyDiffMK d) = ApplySeqDiffMK $ extendSeqUtxoDiff sq sl d
     void $ atomically $ swapTMVar stv (t, MempoolChangelog (pointSlot $ getTip t) $ foldl' (\a (b, c) -> zipLedgerTables (ext b) a c) polyEmptyLedgerTables diffs)
     pure ResponseOk
-
- where
-    prj ::
-         Ord k
-      => ApplyMapKind SeqDiffMK k v
-      -> ApplyMapKind DiffMK k v
-    prj (ApplySeqDiffMK sq) = ApplyDiffMK (cumulativeDiffSeqUtxoDiff sq)
