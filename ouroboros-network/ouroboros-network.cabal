@@ -121,6 +121,11 @@ library
                        Ouroboros.Network.Protocol.KeepAlive.Client
                        Ouroboros.Network.Protocol.KeepAlive.Server
                        Ouroboros.Network.Protocol.KeepAlive.Codec
+                       Ouroboros.Network.PeerSharing
+                       Ouroboros.Network.Protocol.PeerSharing.Type
+                       Ouroboros.Network.Protocol.PeerSharing.Client
+                       Ouroboros.Network.Protocol.PeerSharing.Server
+                       Ouroboros.Network.Protocol.PeerSharing.Codec
                        Ouroboros.Network.TxSubmission.Inbound
                        Ouroboros.Network.TxSubmission.Mempool.Reader
                        Ouroboros.Network.TxSubmission.Outbound
@@ -241,6 +246,9 @@ library protocol-tests
                        Ouroboros.Network.Protocol.KeepAlive.Direct
                        Ouroboros.Network.Protocol.KeepAlive.Examples
                        Ouroboros.Network.Protocol.KeepAlive.Test
+                       Ouroboros.Network.Protocol.PeerSharing.Direct
+                       Ouroboros.Network.Protocol.PeerSharing.Examples
+                       Ouroboros.Network.Protocol.PeerSharing.Test
 
                        Test.ChainGenerators
                        Test.ChainProducerState
