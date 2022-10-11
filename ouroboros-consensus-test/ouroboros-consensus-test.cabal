@@ -157,6 +157,9 @@ test-suite test-consensus
                        Test.Consensus.MiniProtocol.LocalStateQuery.Server
                        Test.Consensus.Mempool
                        Test.Consensus.Mempool.State
+                       Test.Consensus.Mempool.State.Model
+                       Test.Consensus.Mempool.State.SUT
+                       Test.Consensus.Mempool.State.Types
                        Test.Consensus.Node
                        Test.Consensus.ResourceRegistry
                        Test.Consensus.Util.MonadSTM.RAWLock
@@ -179,6 +182,7 @@ test-suite test-consensus
                      , QuickCheck
                      , quickcheck-state-machine
                      , strict-stm
+                     , unliftio-core
                      , quiet
                      , serialise
                      , sop-core

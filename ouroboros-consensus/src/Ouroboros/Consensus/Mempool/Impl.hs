@@ -317,7 +317,7 @@ implSyncWithLedger ::
      , HasTxId (GenTx blk)
      )
   => MempoolEnv m blk
-  -> m (MempoolSnapshot blk TicketNo)
+  -> m (MempoolSnapshot blk TicketNo) -- maybe return the removed txs?
 implSyncWithLedger mpEnv = withReadLock ldgrInterface $ do
   res <- atomically $ do
     is <- takeTMVar istate
@@ -338,6 +338,8 @@ implSyncWithLedger mpEnv = withReadLock ldgrInterface $ do
         let is' = is { isDbChangelog = dbch }
         putTMVar istate is'
         return . Left . implSnapshotFromIS $ is'
+      -- There is another case, in which the tip moved but the anchor is still
+      -- in my prefix. We could optimize this case instead of revalidating.
       _ -> do
         -- The tip changed so we have to revalidate the transactions and we will
         -- also use the updated changelog
@@ -471,7 +473,7 @@ fullForward :: ( IOLike m
 fullForward mpEnv dbch txs err ok = do
   bkst <- getBackingStore (mpEnvLedger mpEnv)
   let rew = RewoundTableKeySets (mcAnchor dbch) (ExtLedgerStateTables $ getKeysForTxList txs)
-  UnforwardedReadSets s vals keys <- defaultReadKeySets (readKeySets bkst) (readDb rew)
+  UnforwardedReadSets s vals keys <- defaultReadKeySets (readKeySets bkst) (readDb rew) -- hide this so that the mempool cannot get access to the full backing store
   let ufs = UnforwardedReadSets s (unExtLedgerStateTables vals) (unExtLedgerStateTables keys)
   case forwardTableKeySets' (mcAnchor dbch) (mcDifferences dbch) ufs of
     Left _         -> err
