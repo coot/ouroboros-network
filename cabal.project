@@ -1,4 +1,21 @@
+-- Custom repository for cardano haskell packages, see CONTRIBUTING for more
+repository cardano-haskell-packages
+  url: https://input-output-hk.github.io/cardano-haskell-packages
+  secure: True
+  root-keys:
+    3e0cce471cf09815f930210f7827266fd09045445d65923e6d0238a6cd15126f
+    443abb7fb497a134c343faf52f0b659bd7999bc06b7f63fa76dc99d631f9bea1
+    a86a1f6ce86c449c46666bda44268677abf29b5b2d2eb5ec7af903ec2f117a82
+    bcec67e8e99cabfa7764d75ad9b158d72bfacf70ca1d0ec8bc6b4406d1bf8413
+    c00aae8461a256275598500ea0e187588c35a5d5d7454fb57eac18d9edb86a56
+    d4a35cd3121aa00d18544bb0ac01c3e1691d618f462c46129271bccf39f7e8ee
+
+-- See CONTRIBUTING for some Nix commands you will need to run if you
+-- update either of these.
+-- Bump this if you need newer packages from Hackage
 index-state: 2022-07-01T00:00:00Z
+-- Bump this if you need newer packages from CHaP
+index-state: cardano-haskell-packages 2022-10-12T00:00:00Z
 
 packages: ./ouroboros-network-testing
           ./monoidal-synchronisation
@@ -88,7 +105,6 @@ package ouroboros-consensus-cardano-test
 package ouroboros-consensus-cardano-tools
   tests: True
 
-
 package cardano-binary
   tests: False
 
@@ -158,129 +174,19 @@ constraints:
   -- constraint from dependent-sum-template (which is the library we actually use).
   , dependent-sum > 0.6.2.0
 
--- ---------------------------------------------------------
--- The "cabal" wrapper script provided by nix-shell will cut off / restore the remainder of this file
--- in order to force usage of nix provided dependencies for `source-repository-package`s.
--- --------------------------- 8< --------------------------
--- Please do not put any `source-repository-package` clause above this line.
+  -- CONSTRAINTS FOR UPSTREAM CARDANO PACKAGES
+  -- These should all be constraints in upstream packages, but are currently missing.
+  -- We should a) fix these upstream and b) revise the constraints  on the released
+  -- version in CHaP. Unfortunately revisions in CHaP don't work yet, revisit this
+  -- when we fix it.
 
-source-repository-package
-  type: git
-  location: https://github.com/input-output-hk/io-sim
-  tag: b9824e8cab3429f0831e01dfc8f0fdecef1a2325
-  --sha256: 1p5f456d8gidsdxyhwp36r3jhhpizvvgphiv5mv2pgj2si40nklc
-  subdir:
-    io-classes
-    io-sim
-    strict-stm
-
-source-repository-package
-  type: git
-  location: https://github.com/input-output-hk/typed-protocols
-  tag: 254a4f8520ff58bb80bf1468d279391c6002436e
-  --sha256: 1jpdlks39s9yih96kadzb6va0ag7c1l9510a0q98bj7gksng4218
-  subdir:
-    typed-protocols
-    typed-protocols-cborg
-    typed-protocols-examples
-
-source-repository-package
-  type: git
-  location: https://github.com/input-output-hk/Win32-network
-  tag: 3825d3abf75f83f406c1f7161883c438dac7277d
-  --sha256: 19wahfv726fa3mqajpqdqhnl9ica3xmf68i254q45iyjcpj1psqx
-
-source-repository-package
-  type: git
-  location: https://github.com/input-output-hk/iohk-monitoring-framework
-  tag: 066f7002aac5a0efc20e49643fea45454f226caa
-  --sha256: 0s6x4in11k5ba7nl7la896g28sznf9185xlqg9c604jqz58vj9nj
-  subdir: contra-tracer
-
-source-repository-package
-  type: git
-  location: https://github.com/input-output-hk/cardano-prelude
-  tag: 533aec85c1ca05c7d171da44b89341fb736ecfe5
-  --sha256: 0z2y3wzppc12bpn9bl48776ms3nszw8j58xfsdxf97nzjgrmd62g
-  subdir:
-    cardano-prelude
-    cardano-prelude-test
-
-source-repository-package
-  type: git
-  location: https://github.com/input-output-hk/cardano-base
-  tag: 631cb6cf1fa01ab346233b610a38b3b4cba6e6ab
-  --sha256: 0944wg2nqazmhlmsynwgdwxxj6ay0hb9qig9l128isb2cjia0hlp
-  subdir:
-    base-deriving-via
-    binary
-    binary/test
-    cardano-crypto-class
-    cardano-crypto-praos
-    cardano-crypto-tests
-    measures
-    orphans-deriving-via
-    slotting
-    strict-containers
-
-source-repository-package
-  type: git
-  location: https://github.com/input-output-hk/cardano-ledger
-  tag: 49613f11e034485c8377945c86c0465726c0860c
-  --sha256: 0gxb9xghsacr0qaljhq3qzvmb2f1wwmly89prwqy4fdm9mvqiq95
-  subdir:
-    eras/alonzo/impl
-    eras/alonzo/test-suite
-    eras/babbage/impl
-    eras/babbage/test-suite
-    eras/byron/chain/executable-spec
-    eras/byron/crypto
-    eras/byron/crypto/test
-    eras/byron/ledger/executable-spec
-    eras/byron/ledger/impl
-    eras/byron/ledger/impl/test
-    eras/shelley-ma/impl
-    eras/shelley-ma/test-suite
-    eras/shelley/impl
-    eras/shelley/test-suite
-    libs/cardano-data
-    libs/cardano-ledger-core
-    libs/cardano-ledger-pretty
-    libs/cardano-protocol-tpraos
-    libs/non-integral
-    libs/set-algebra
-    libs/small-steps
-    libs/small-steps-test
-    libs/vector-map
-
-source-repository-package
-  type: git
-  location: https://github.com/input-output-hk/plutus
-  tag: 8ab4c3355c5fdf67dcf6acc1f5a14668d5e6f0a9
-  --sha256: 12d6bndmj0dxl6xlaqmf78326yp5hw093bmybmqfpdkvk4mgz03j
-  subdir:
-    plutus-ledger-api
-    plutus-tx
-    plutus-core
-    prettyprinter-configurable
-    word-array
-
-source-repository-package
-  type: git
-  location: https://github.com/input-output-hk/goblins
-  tag: cde90a2b27f79187ca8310b6549331e59595e7ba
-  --sha256: 17c88rbva3iw82yg9srlxjv2ia5wjb9cyqw44hik565f5v9svnyg
-
-source-repository-package
-  type: git
-  location: https://github.com/input-output-hk/cardano-crypto
-  tag: f73079303f663e028288f9f4a9e08bcca39a923e
-  --sha256: 1n87i15x54s0cjkh3nsxs4r1x016cdw1fypwmr68936n3xxsjn6q
-
--- Drops an instance breaking the Plutus code. Should be released to Hackage
--- eventually.
-source-repository-package
-  type: git
-  location: https://github.com/input-output-hk/flat
-  tag: ee59880f47ab835dbd73bea0847dab7869fc20d8
-  --sha256: 1lrzknw765pz2j97nvv9ip3l1mcpf2zr4n56hwlz0rk7wq7ls4cm
+  -- cardano-crypto-wrapper: broken by cardano-prelude-0.1.0.1 which moves HeapWords out
+  , cardano-prelude < 0.1.0.1
+  -- cardano-ledger-byron: broken by cardano-binary-1.5.0.1 which includes some functions
+  -- that used to be in cardano-prelude
+  , cardano-binary < 1.5.0.1
+  -- plutus: cardano-crypto-class-2.0.0.1 changes the signatures of some DSIGN functions for secp256k1
+  , cardano-crypto-class < 2.0.0.1
+    -- cardano-crypto-tests: we required cardano-crypto-class-2.0.0.0 above, which is broken with
+  -- newer cardano-crypto-tests
+  , cardano-crypto-tests < 2.0.0.1

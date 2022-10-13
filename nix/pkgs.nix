@@ -1,13 +1,16 @@
+{ sources }:
 # our packages overlay
 pkgs: _:
 with pkgs; {
   ouroborosNetworkHaskellPackages = import ./ouroboros-network.nix {
     inherit config pkgs lib stdenv haskell-nix buildPackages;
+    CHaP = sources.cardano-haskell-packages;
   };
 
   ouroborosNetworkHaskellPackagesWithTVarCheck = import ./ouroboros-network.nix {
     inherit config pkgs lib stdenv haskell-nix buildPackages;
     checkTVarInvariant = true;
+    CHaP = sources.cardano-haskell-packages;
   };
 
   network-docs = callPackage ./network-docs.nix { };

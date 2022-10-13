@@ -37,5 +37,17 @@
         "url": "https://github.com/input-output-hk/iohk-nix/archive/9a604d01bd4420ab7f396f14d1947fbe2ce7db8b.tar.gz",
         "url_template": "https://github.com/<owner>/<repo>/archive/<rev>.tar.gz",
         "version": "60fe72cf807a4ec4409a53883d5c3af77f60f721"
+    },
+    "cardano-haskell-packages": {
+        "branch": "repo",
+        "description": "Metadata for Cardano's Haskell package repository",
+        "homepage": "https://input-output-hk.github.io/cardano-haskell-packages/",
+        "owner": "input-output-hk",
+        "repo": "cardano-haskell-packages",
+        "rev": "d4af732a53321a1d1760023a2fa5b3f656cc3bfd",
+        "sha256": "0zp19d79szvkvg8h5iv8w6qfd6m2cxy6p7pndf2r6zh923zyxqmf",
+        "type": "tarball",
+        "url": "https://github.com/input-output-hk/cardano-haskell-packages/archive/d4af732a53321a1d1760023a2fa5b3f656cc3bfd.tar.gz",
+        "url_template": "https://github.com/<owner>/<repo>/archive/<rev>.tar.gz"
     }
 }
