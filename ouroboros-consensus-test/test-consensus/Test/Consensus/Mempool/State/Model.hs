@@ -27,13 +27,19 @@ import           Ouroboros.Network.Block
 import           Test.StateMachine
 
 import           Test.Consensus.Mempool.State.Types
+import Debug.Trace (trace)
 
 {-------------------------------------------------------------------------------
   Model transition
 -------------------------------------------------------------------------------}
+thd :: (a, b, c) -> c
+thd (_, _, c) = c
+
 transitions :: ( IsLedger (LedgerState blk)
                , TickedTableStuff (LedgerState blk)
                , LedgerSupportsMempool blk
+               , Show (Action blk r)
+               , Show (Response blk r)
                , Eq (GenTx blk)
                )
             => LedgerConfig blk
@@ -44,9 +50,8 @@ transitions :: ( IsLedger (LedgerState blk)
 transitions cfg model cmd resp =
   case (model, cmd, resp) of
     (NeedsInit, Init st, ResponseOk) ->
-      let slot = withOrigin' (pointSlot $ getTip st)
-          st'  = tickSt cfg (slot + 1) st
-      in Model TxSeq.Empty st' TxSeq.zeroTicketNo (MockLedgerDB (forgetLedgerTables st) ((slot, projectLedgerTables st) NE.:| [])) (computeMempoolCapacity st' NoMempoolCapacityBytesOverride) Nothing
+      let st'  = tickSt cfg 1 st
+      in Model TxSeq.Empty st' TxSeq.zeroTicketNo (MockLedgerDB (forgetLedgerTables st) ((1, forgetLedgerTables st, projectLedgerTables st) NE.:| [])) (computeMempoolCapacity st' NoMempoolCapacityBytesOverride) Nothing
 
     (NeedsInit, _, _)        -> error "unreachable"
 
@@ -55,9 +60,10 @@ transitions cfg model cmd resp =
 
     (Model _ _ _ _ _ Nothing, SyncLedger, ResponseOk)  -> model
     (Model _ _ _ _ _ (Just m), SyncLedger, ResponseOk) -> model { modelBackingStore = m }
+    (Model _ _ _ _ _ Nothing, SyncLedger, SyncOk st' removed) -> model -- TODO Why??
     (Model txs _ _ _ _ (Just m), SyncLedger, SyncOk st' removed) ->
       let txs' = TxSeq.fromList [ t | t <- TxSeq.toList txs, txForgetValidated (txTicketTx t) `notElem` removed ]
-          st'' = st' `withLedgerTablesTicked` zfwd (snd $ NE.last $ mockTables m) (projectLedgerTablesTicked st')
+          st'' = st' `withLedgerTablesTicked` zfwd (thd $ NE.last $ mockTables m) (projectLedgerTablesTicked st')
       in model { modelTxs = txs'
                , modelState = st''
                , modelBackingStore = m
@@ -69,25 +75,25 @@ transitions cfg model cmd resp =
       let model' = case s of
                      Nothing                                             -> model
                      Just s'
-                       | mockTip s' == mockTip (modelBackingStore model) -> model
+                       | mockTip s' == mockTip (modelBackingStore model) -> model { modelBackingStore = s' }
                        | otherwise                                       -> transitions cfg model SyncLedger (SyncOk st' removed)
           txs'             = foldl' (TxSeq.:>) (modelTxs model') [ t | MempoolTxAddedPlus t <- added ]
       in model' { modelTxs = txs', modelTicket = tk' }
 
     (Model _ _ _ _ _ Nothing, UnsyncAnchor w, ResponseOk) ->
-      let newTables = fromJust $ NE.nonEmpty $ NE.drop (fromIntegral w) $ mockTables $ modelBackingStore model
+      let newTables = maybe (NE.last (mockTables $ modelBackingStore model) NE.:| []) id $ NE.nonEmpty $ NE.drop (fromIntegral w) $ mockTables $ modelBackingStore model -- failing!!
       in model { modelNextSync = Just $ (modelBackingStore model) { mockTables = newTables } }
     (Model _ _ _ _ _ (Just s), UnsyncAnchor w, ResponseOk) ->
-      let newTables = fromJust $ NE.nonEmpty $ NE.drop (fromIntegral w) $ mockTables s
-      in model { modelNextSync = Just $ (modelBackingStore model) { mockTables = newTables } }
+      let newTables = maybe (NE.last (mockTables s) NE.:| []) id $NE.nonEmpty $ NE.drop (fromIntegral w - 1) $ mockTables s
+      in model { modelNextSync = Just $ s { mockTables = newTables } }
     (Model _ _ _ _ _ Nothing, UnsyncTip tip diffs, ResponseOk) ->
-      let newTables = NE.reverse $ foldl' (\acc (s, d)  -> (s, zfwd (snd $ NE.head acc) d) NE.<| acc) (NE.head (mockTables $ modelBackingStore model) NE.:| []) (NE.toList diffs)
+      let newTables = NE.reverse $ foldl' (\acc (s, st, d)  -> (s, st, zfwd (thd $ NE.head acc) d) NE.<| acc) (NE.head (mockTables $ modelBackingStore model) NE.:| []) (NE.toList diffs)
       in model { modelNextSync = Just $ MockLedgerDB tip newTables }
     (Model _ _ _ _ _ (Just s), UnsyncTip tip diffs, ResponseOk) ->
-      let newTables = NE.reverse $ foldl' (\acc (sl, d) -> (sl, zfwd (snd $ NE.head acc) d) NE.<| acc) (NE.head (mockTables s) NE.:| []) (NE.toList diffs)
+      let newTables = NE.reverse $ foldl' (\acc (sl, st, d) -> (sl, st, zfwd (thd $ NE.head acc) d) NE.<| acc) (NE.head (mockTables s) NE.:| []) (NE.toList diffs)
       in model { modelNextSync = Just $ MockLedgerDB tip newTables }
 
-    (Model{}, _, _) -> error "unreachable"
+    (Model{}, c, r) -> error $ "unreachable " <> show c <> " " <> show r
 
 mock :: LedgerSupportsMempool blk
      => LedgerConfig blk
@@ -103,7 +109,7 @@ mock cfg model action = case (model, action) of
     then pure ResponseOk
     else do
       let slot                 = withOrigin' (pointSlot $ getTip tip)
-          ticked               = tickSt cfg (slot + 1) (tip `withLedgerTables` snd (NE.last tbs))
+          ticked               = tickSt cfg (slot + 1) (tip `withLedgerTables` thd (NE.last tbs))
           (applied, processed) = foldTxs' cfg (ticked, []) [ txForgetValidated $ TxSeq.txTicketTx tx | tx <- TxSeq.toList txs ]
           diffed               = forgetLedgerTablesValuesTicked $ calculateDifferenceTicked ticked applied
       pure $ SyncOk diffed [ tx | MempoolTxRejected tx _                                                  <- processed ]
@@ -114,13 +120,13 @@ mock cfg model action = case (model, action) of
     case (resp, toSync) of
       (ResponseOk, _)                                          -> do
         let (tk', st', processed, pending)     = foldTxs cfg cap' (tk, st, []) txs'
-            st''                               = st' `withLedgerTablesTicked` zdiff (snd $ NE.last $ mockTables bkst) (projectLedgerTablesTicked st')
+            st''                               = st' `withLedgerTablesTicked` zdiff (thd $ NE.last $ mockTables bkst) (projectLedgerTablesTicked st')
         pure $ RespTryAddTxs st'' tk' processed pending []
       (SyncOk synced removed, Just (MockLedgerDB _ newTables)) -> do
-        let synced'                            = synced `withLedgerTablesTicked` zfwd (snd $ NE.last newTables) (projectLedgerTablesTicked synced)
+        let synced'                            = synced `withLedgerTablesTicked` zfwd (thd $ NE.last newTables) (projectLedgerTablesTicked synced)
             cap'' = cap' + sum [ txInBlockSize t | t <- removed ]
             (tk', applied, processed, pending) = foldTxs cfg cap'' (tk, synced', []) txs'
-            diffed = applied `withLedgerTablesTicked` zdiff (snd $ NE.last newTables) (projectLedgerTablesTicked applied)
+            diffed = applied `withLedgerTablesTicked` zdiff (thd $ NE.last newTables) (projectLedgerTablesTicked applied)
         pure $ RespTryAddTxs diffed tk' processed pending removed
       _ -> error "unreachable"
 
@@ -128,7 +134,7 @@ mock cfg model action = case (model, action) of
     pure $ Snapshot [ (TxSeq.txTicketTx tx, TxSeq.txTicketNo tx) | tx <- TxSeq.toList txs]
 
   (Model txs _ _ m _ Nothing, GetSnapshotFor st mch) -> do
-    let st' = st `withLedgerTablesTicked` zipLedgerTables fwd' (snd $ NE.head $ mockTables m) (mcDifferences mch)
+    let st' = st `withLedgerTablesTicked` zipLedgerTables fwd' (thd $ NE.head $ mockTables m) (mcDifferences mch)
         (_, processed) = foldTxs' cfg (st', []) [ txForgetValidated $ TxSeq.txTicketTx tx | tx <- TxSeq.toList txs ]
     pure $ SnapshotFor $ Just [ tx | MempoolTxAdded tx                                         <- processed ]
   (Model _ _ _ _ _ _, GetSnapshotFor{}) -> pure $ SnapshotFor Nothing

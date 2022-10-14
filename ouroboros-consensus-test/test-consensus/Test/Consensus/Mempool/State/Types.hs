@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE DerivingStrategies   #-}
 {-# LANGUAGE FlexibleContexts     #-}
+{-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE PolyKinds            #-}
 {-# LANGUAGE StandaloneDeriving   #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -25,9 +26,11 @@ module Test.Consensus.Mempool.State.Types (
 import           Data.Kind
 import           Data.List.NonEmpty (NonEmpty)
 import           GHC.Generics
-                   (Generic1)
+                   (Generic1, Generic)
 
 import           Cardano.Slotting.Slot
+
+import           Data.TreeDiff.Class (genericToExpr)
 
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.SupportsMempool
@@ -65,7 +68,7 @@ data Action blk (r     :: Type -> Type)
     -- This means @switchToFork@
   | UnsyncTip
       { unsyncTip   :: !(LedgerState blk EmptyMK),
-        unsyncDiffs :: !(NonEmpty (SlotNo, LedgerTables (LedgerState blk) DiffMK))
+        unsyncDiffs :: !(NonEmpty (SlotNo, LedgerState blk EmptyMK, LedgerTables (LedgerState blk) DiffMK))
       }
 
     -- | Make the ledger go out of sync moving the anchor forward
@@ -160,8 +163,9 @@ deriving instance ( Show (Validated (GenTx blk))
 --  * sorted (NE.map fst mockTables)
 data MockLedgerDB blk          = MockLedgerDB
   { mockTip    :: !(LedgerState blk EmptyMK)
-  , mockTables :: !(NonEmpty (SlotNo, LedgerTables (LedgerState blk) ValuesMK))
-  }
+  , mockTables :: !(NonEmpty (SlotNo, LedgerState blk EmptyMK, LedgerTables (LedgerState blk) ValuesMK))
+  } deriving (Generic)
+
 
 deriving instance ( Eq (LedgerState blk EmptyMK)
                   , Eq (LedgerTables (LedgerState blk) ValuesMK)
@@ -191,7 +195,9 @@ data Model blk (r :: Type -> Type) =
         -- | This might hols a new LedgerDB if we have to resync. Further
         -- unsyncs will modify this value.
       , modelNextSync :: !(Maybe (MockLedgerDB blk))
-      }
+      } deriving (Generic)
+
+
 
 deriving instance ( Eq (TickedLedgerState blk ValuesMK)
                   , Eq (MockLedgerDB blk)

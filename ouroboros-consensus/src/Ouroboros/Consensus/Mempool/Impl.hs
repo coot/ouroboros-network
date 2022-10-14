@@ -8,6 +8,7 @@
 {-# LANGUAGE Rank2Types          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE BangPatterns #-}
 
 -- | Monadic side of the Mempool implementation.
 --
@@ -33,7 +34,7 @@ import           Control.Monad.Class.MonadSTM.Strict (newTMVarIO)
 import           Control.Monad.Except
 import           Data.Foldable (foldl')
 import qualified Data.List.NonEmpty as NE
-import           Data.Maybe (fromMaybe)
+import           Data.Maybe (fromMaybe, isNothing)
 import qualified Data.Set as Set
 import           Data.Typeable
 
@@ -62,6 +63,7 @@ import           Ouroboros.Consensus.Util (whenJust)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (Watcher (..), forkLinkedWatcher)
+import Debug.Trace
 
 {-------------------------------------------------------------------------------
   Top-level API
@@ -307,7 +309,7 @@ implTryAddTxs mpEnv wti =
                   atomically $ putTMVar istate $ fromMaybe is is'
                   traceWith trcr ev
                   go (result:acc) next
-        fullForward mpEnv (isDbChangelog is) [tx] err ok
+        fullForward mpEnv (isDbChangelog is) [tx] (const err) ok
 
 implSyncWithLedger ::
      forall m blk. (
@@ -413,23 +415,24 @@ implGetSnapshotFor ::
   -> TickedLedgerState blk DiffMK
   -> MempoolChangelog blk
   -> m (Maybe (MempoolSnapshot blk TicketNo))
-implGetSnapshotFor mpEnv slot ticked mempoolCh = do
+implGetSnapshotFor mpEnv !slot ticked mempoolCh = do
   res <- atomically $ do
     is <- readTMVar istate
     if   isTip    is == castHash (getTipHash ticked)
       && isSlotNo is == slot
-      then
+      then do
         -- We are looking for a snapshot exactly for the ledger state we already
         -- have cached, then just return it.
         pure . Left . implSnapshotFromIS $ is
-      else
+      else do
         -- We need to revalidate the transactions.
         pure $ Right is
   case res of
-    Left snap -> pure $ Just snap
+    Left snap ->
+      pure $ Just snap
     Right is ->
       fullForward mpEnv mempoolCh (map (txForgetValidated. txTicketTx) $ TxSeq.toList $ isTxs is)
-               ( pure Nothing )
+               ( const $ pure Nothing )
                ( pure
                . Just
                . pureGetSnapshotFor cfg capacityOverride is (ForgeInKnownSlot slot ticked)
@@ -458,7 +461,7 @@ forward_ env ch txs = fullForward
                         env
                         ch
                         (map (txForgetValidated. txTicketTx) txs)
-                        (error "This must not happen: the read lock should be held!")
+                        (error . ("This must not happen: the read lock should be held!" <>) . show)
 
 -- | Run one of the continuations with the forwarded ledger tables.
 fullForward :: ( IOLike m
@@ -467,7 +470,7 @@ fullForward :: ( IOLike m
             => MempoolEnv m blk
             -> MempoolChangelog blk
             -> [GenTx blk]
-            -> m a
+            -> ((WithOrigin SlotNo, WithOrigin SlotNo) -> m a)
             -> (LedgerTables (LedgerState blk) ValuesMK -> m a)
             -> m a
 fullForward mpEnv dbch txs err ok = do
@@ -476,7 +479,7 @@ fullForward mpEnv dbch txs err ok = do
   UnforwardedReadSets s vals keys <- defaultReadKeySets (readKeySets bkst) (readDb rew) -- hide this so that the mempool cannot get access to the full backing store
   let ufs = UnforwardedReadSets s (unExtLedgerStateTables vals) (unExtLedgerStateTables keys)
   case forwardTableKeySets' (mcAnchor dbch) (mcDifferences dbch) ufs of
-    Left _         -> err
+    Left e         -> err e
     Right fwValues -> ok fwValues
 
 getKeysForTxList :: LedgerSupportsMempool blk

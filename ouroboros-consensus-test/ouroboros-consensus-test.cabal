@@ -156,6 +156,7 @@ test-suite test-consensus
                        Test.Consensus.MiniProtocol.ChainSync.Client
                        Test.Consensus.MiniProtocol.LocalStateQuery.Server
                        Test.Consensus.Mempool
+                       Test.Consensus.Mempool.Block
                        Test.Consensus.Mempool.State
                        Test.Consensus.Mempool.State.Model
                        Test.Consensus.Mempool.State.SUT
@@ -191,6 +192,7 @@ test-suite test-consensus
                      , tasty-quickcheck
                      , temporary
                      , time
+                     , table-layout
                      , transformers
                      , tree-diff
 
