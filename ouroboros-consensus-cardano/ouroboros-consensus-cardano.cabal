@@ -91,6 +91,7 @@ executable db-analyser
                      , cborg
                      , containers
                      , contra-tracer
+                     , filepath
                      , mtl
                      , nothunks
                      , optparse-applicative
@@ -123,3 +124,27 @@ executable db-analyser
                        -threaded
                        -rtsopts
                        "-with-rtsopts=-T -I0 -N2 -A16m"
+
+executable plot-db-analysis
+  hs-source-dirs:      tools/plot-db-analysis
+  main-is:             Main.hs
+  build-depends:       base
+                     , bytestring
+                     , Chart       == 1.9.3
+                     , Chart-cairo == 1.9.3
+                     , hvega       == 0.12.0.2
+                     , extra
+                     , optparse-applicative
+                     , text
+
+  default-language:    Haskell2010
+  ghc-options:         -Wall
+                       -Wcompat
+                       -Wincomplete-uni-patterns
+                       -Wincomplete-record-updates
+                       -Wpartial-fields
+                       -Widentities
+                       -Wredundant-constraints
+                       -Wmissing-export-lists
+                       -threaded
+                       -rtsopts
