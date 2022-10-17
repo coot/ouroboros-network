@@ -13,7 +13,7 @@
 \usepackage{tikz}
 
 \hypersetup{
-  pdftitle={The Cardano Consensus and Storage Layer},
+  pdftitle={Storing the Cardano ledger state on disk},
   pdfborder={0 0 0},
   breaklinks=true
 }
@@ -113,8 +113,9 @@
 
 The current and first version of UTxO-HD focuses only on moving the UTxO set to
 the disk storage. This impacts the Consensus codebase almost in its entirety.
-The Ledger and Node layers remain ignorant to this change and therefore the
-interface to them has to be slightly modified.
+The Ledger and Node layers remain ignorant to this change on their side if the
+interface and therefore the consensus side of the interface to them has to be
+slightly modified.
 
 The reader is assumed to be familiar with the Consensus report and the general
 architecture of the Consensus and Ledger layers.
@@ -123,23 +124,28 @@ architecture of the Consensus and Ledger layers.
 
 \subsection{The \texttt{LedgerTables} data family}
 
-Previously, a ledger state was a logical value on its own which held a
-consistent view of the chain at a given slot. After UTxO-HD this is no longer
-the case, and a Ledger state without the series of differences in the UTxO set
-only provides partial information. The data has then been split between the
-\emph{in-memory} part and the \emph{on-disk} part.
+As defined in the blockchain literature, a \textbf{Ledger state at block $B$} is
+the state of the system after applying all the blocks since Genesis up to block
+$B$ (included) on top of the Genesis state. It contains the full state of the
+system, namely the UTxO set, the stake delegations, chain state (nonces), etc. A
+full description of the Ledger state can be found in the Ledger
+specifications\footnote{\href{https://github.com/input-output-hk/cardano-ledger}{https://github.com/input-output-hk/cardano-ledger}}.
 
-The core of the UTxO-HD implementation are what we call \emph{the ledger
-  tables}.
+As we will be talking about the architectural changes in the code, we will be referring to values of type \texttt{LedgerState blk} as \textbf{Ledger states}.
+
+Previously, a \texttt{LedgerState blk} was a complete representation of the
+concept of \textbf{Ledger state} as defined above.
 
 \begin{lstlisting}
-data family LedgerTables l :: LedgerStateKind
+type LedgerState :: Type -> Type
+data family LedgerState blk
 \end{lstlisting}
 
-A ledger state now has ledger tables attached to it, which live
-outside the ledger state. The ledger tables represent partial information for
-the maps that have been moved to disk, in particular as mentioned above in this
-version only the UTxO set.
+After UTxO-HD this is no longer the case as the UTxO set has been projected out
+of said data-type. The data has then been split between the \emph{in-memory}
+part (what we now informally call \emph{the ledger state without tables} or
+\emph{the ledger state in memory}) and the \emph{ledger tables} which are
+on-disk.
 
 \begin{figure}[h]
   \centering
@@ -153,26 +159,145 @@ version only the UTxO set.
   \caption{The separation between the ledger state and the tables}
 \end{figure}
 
-Note that the hole left by extracting the tables is not really a hole, but
-instead it is filled with an empty \texttt{Data.Map} container.
+
+\begin{lstlisting}
+  type MapKind :: {- key -} Type -> {- value -} Type -> Type
+  type LedgerStateKind :: MapKind -> Type
+
+  type LedgerState :: Type -> LedgerStateKind
+  data family LedgerState
+
+  type LedgerTables :: LedgerStateKind -> LedgerStateKind
+  data family LedgerTables
+\end{lstlisting}
+
+A ledger state now has ledger tables attached to it, which live outside the
+ledger state. The ledger tables represent partial information for the maps that
+have been moved to disk, in particular as mentioned above in this version only
+the UTxO set. We can access the ledger tables of a ledger state via
+\texttt{projectLedgerTables} and we can attach tables to a ledger state via
+\texttt{withLedgerTables}.
+
+\begin{lstlisting}
+  projectLedgerTables :: l mk  -> LedgerTables l mk
+  withLedgerTables    :: l any -> LedgerTables l mk -> l mk
+\end{lstlisting}
 
 The tables themselves can represent different logical states of the UTxO set,
 either actual values, differences, both or even represent no information about
-the UTxO set at all.
+the UTxO set at all. The alternative values that can be held in the tables are
+given by the following GADT:
 
 \begin{lstlisting}
-data MapKind :: MapKind' -> Type -> Type -> Type where
-  EmptyMK    ::                                  ApplyMapKind' EmptyMK'    k v
-  KeysMK     :: !(Keys    k v)                -> ApplyMapKind' KeysMK'     k v
-  ValuesMK   :: !(Values  k v)                -> ApplyMapKind' ValuesMK'   k v
-  DiffMK     :: !(Diff    k v)                -> ApplyMapKind' DiffMK'     k v
-  SeqDiffMK  :: !(SeqDiff k v)                -> ApplyMapKind' SeqDiffMK'  k v
-  TrackingMK :: !(Values  k v) -> !(Diff k v) -> ApplyMapKind' TrackingMK' k v
+data ApplyMapKind' :: MapKind' -> Type -> Type -> Type where
+  ApplyEmptyMK    ::                           ApplyMapKind' EmptyMK'    k v
+  ApplyKeysMK     :: !(Set k)               -> ApplyMapKind' KeysMK'     k v
+  ApplyValuesMK   :: !(Map k v)             -> ApplyMapKind' ValuesMK'   k v
+  ApplyDiffMK     :: !(Map k (DiffEntry v)) -> ApplyMapKind' DiffMK'     k v
+  ApplyTrackingMK :: !(Map k v)
+                  -> !(Map k (DiffEntry v)) -> ApplyMapKind' TrackingMK' k v
 \end{lstlisting}
 
-The ledger tables of \emph{values} are \emph{partial projections} of data which
-currently can be extracted from a ledger state so naturally we have functions to
-inject or project.
+The intuition about what these values represent can be easily described:
+\begin{itemize}
+  \item a value of type \texttt{LedgerState blk EmptyMK} can project tables of
+        type \texttt{LedgerTables (LedgerState blk) EmptyMK} which holds an
+        empty constructor \texttt{ApplyEmptyMK}.
+  \item a value of type \texttt{LedgerState blk KeysMK} can project tables of
+        type \texttt{LedgerTables (LedgerState blk) KeysMK} which holds a set of
+        keys. For the UTxO set case in particular, a set of \texttt{TxIn}s.
+  \item a value of type \texttt{LedgerState blk ValuesMK} can project tables of
+        type \texttt{LedgerTables (LedgerState blk) ValuesMK} which holds a map
+        from keys to values. For the UTxO set case in particular, a map of
+        \texttt{TxIn}s to \texttt{TxOut}s.
+  \item a value of type \texttt{LedgerState blk DiffMK} can project tables of
+        type \texttt{LedgerTables (LedgerState blk) DiffMK} which holds a map
+        from keys to diff entries. Diff entries are computed by comparing two
+        \texttt{ValuesMK} tables to find out which keys have been
+        removed/inserted/updated from one map to another. For the UTxO set case
+        in particular, as entries cannot be updated nor they can be inserted
+        twice, this holds a map from \texttt{TxIn}s to whether that key was
+        inserted (and with what value) or whether it was deleted.
+  \item a value of type \texttt{LedgerState blk TrackingMK} can project tables
+        of type \texttt{LedgerTables (LedgerState blk) TrackingMK} which is a
+        sum of a \texttt{ValuesMK} table and a \texttt{DiffMK} table.
+\end{itemize}
+
+The following ghci pseudo-examples show representations of each type of tables:
+
+\begin{lstlisting}
+  > let l  = foo :: LedgerState blk EmptyMK
+  > let k  = l `withLedgerTables` ApplyKeysMK (fromList [10, 12])
+  > let v1 = l `withLedgerTables` ApplyValuesMK (fromList [(0, 0), (1, 1)])
+  > let v2 = l `withLedgerTables` ApplyValuesMK (fromList [(1, 1), (2, 4)])
+  > printTables l
+  Empty
+  > printTables k
+  ApplyKeysMK   (fromList [10, 12])
+  > printTables v1
+  ApplyValuesMK (fromList [(0,0), (1,1)])
+  > printTables (v2 `diff` v1)
+  ApplyDiffMK   (fromList [(0, Delete), (2, Insert 4)])
+\end{lstlisting}
+
+\subsection{The discrepancy between in-memory and on-disk}
+\begin{observation}
+  \emph{The ledger states defined above use \textbf{the same in-memory part} (namely the in-memory part of \texttt{l}).}
+  \emph{The part which is not the Ledger tables is unaffected by the particular choice of \texttt{ApplyMapKind}.}
+\end{observation}
+
+This is a crucial observation: \texttt{l} is \textbf{not} dependent on the
+tables. As mentioned in the beginning of this section, the Ledger interface side
+of the Consensus-Ledger interface didn't change so we have to end up providing
+data in a structure equivalent to the one before UTxO-HD. In particular, there
+must be a field on the data structure hierarchy that builds a
+\texttt{LedgerState blk mk} that must contain the UTxO set and nothing prevents
+us from having some data there. In particular, the following ledger state is well-shaped:
+
+\begin{lstlisting}
+  > let (txin, txout) = ... :: (TxIn blk, TxOut blk)
+  > let l' = SomeLedgerStateConstructor {
+      .. = {
+          ..
+        , utxoSet = Map.singleton [(txin, txout)]
+        }
+      } `withLedgerTables` ApplyEmptyMK :: LedgerState blk EmptyMK
+\end{lstlisting}
+
+(Just for simplicity we are assuming \texttt{TxIn} and \texttt{TxOut} depend on
+the block type although this is not the case in reality). One can think that
+this value makes no sense as it holds a UTxO set despite the tables being empty.
+However this comes from the Ledger layer remaining ignorant to UTxO-HD.
+
+The Ledger layer types are wrapped by Consensus types representing the Ledger
+state, and despite the tables being part of the latter, they are not part of the
+former. As an example, one can see the \texttt{LedgerState (ShelleyBlock proto
+  era)} where before UTxO-HD:
+
+\begin{lstlisting}
+  data instance LedgerState (ShelleyBlock proto era) = ShelleyLedgerState {
+      shelleyLedgerTip        :: !(WithOrigin (ShelleyTip proto era))
+    , shelleyLedgerState      :: !(SL.NewEpochState era)
+    , shelleyLedgerTransition :: !ShelleyTransition
+  }
+\end{lstlisting}
+
+The Ledger layer defines \texttt{SL.NewEpochState} (as defined in the Ledger
+formal specifications) and the Consensus layer wraps this type in its own
+\texttt{LedgerState} data-type instance. Now, after UTxO-HD, this datatype has evolved into the following:
+
+\begin{lstlisting}
+  data instance LedgerState (ShelleyBlock proto era) mk = ShelleyLedgerState {
+      shelleyLedgerTip        :: !(WithOrigin (ShelleyTip proto era))
+    , shelleyLedgerState      :: !(SL.NewEpochState era)
+    , shelleyLedgerTransition :: !ShelleyTransition
+    , shelleyLedgerTables     :: !(LedgerTables
+                                     (LedgerState (ShelleyBlock proto era))
+                                     mk)
+    }
+\end{lstlisting}
+
+The ledger operates with \texttt{NewEpochState}s only so we need some way to move the values on the tables into the UTxO in the \texttt{NewEpochState} and viceversa. Those functions are defined in the class \texttt{StowableLedgerTables}:
 
 \begin{lstlisting}
 class StowableLedgerTables l where
@@ -180,8 +305,24 @@ class StowableLedgerTables l where
   unstowLedgerTables :: l EmptyMK  -> l ValuesMK
 \end{lstlisting}
 
-\emph{Differences} are no more than specifications of keys and values that have been
-either inserted or deleted when going from one ledger state to another. In particular, differences can be applied to values, process which we will call \textbf{forwarding}.
+So now, using the same values as in previous code snippets:
+\begin{lstlisting}
+  > printUtxosInNewEpochState l'
+  fromList [(txin, txout)]
+  > printTables l'
+  Empty
+  > printTables (unstowLedgerTables l')
+  ApplyValuesMK (fromList [(txin, txout)])
+  > printUtxosInNewEpochState (unstowLedgerTables l')
+  fromList []
+  > stowLedgerTables (unstowLedgerTables l') == l'
+  True
+\end{lstlisting}
+
+Note that the hole left by extracting the tables is not really a hole as
+pictured earlier in this section, but instead it is filled with an empty
+\texttt{Data.Map} container.
+
 
 \begin{observation}
   \label{ko1}
@@ -189,7 +330,7 @@ either inserted or deleted when going from one ledger state to another. In parti
     of values and a sequence of differences}.
 \end{observation}
 
-\subsubsection{Notation}
+\subsection{Notation}
 When representing a ledger state from now on, in case the ledger state is as
 known by the ledger (oblivious to ledger tables), we will denote it with
 $\mathbb{L}$, and otherwise we will denote it as $L^{s}_{T}$ where $s$ means the
