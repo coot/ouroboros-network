@@ -39,6 +39,8 @@ import           Ouroboros.Consensus.Protocol.Translate
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 
 import qualified Database.LMDB.Simple as LMDB
+import qualified Database.LMDB.Simple.Codec as LMDB.Codec
+import qualified Database.LMDB.Simple.Cursor as LMDB.Cursor
 
 data Options = Options { inmemFile :: FilePath, lmdbFile :: FilePath } deriving Show
 
@@ -87,13 +89,16 @@ getLMDB dbFilePath = do
   (Consensus.LMDB.dbsSeq dbSettings,) <$> (LMDB.readWriteTransaction dbEnv (zipLedgerTablesA f dbBackingTables codecLedgerTables) :: IO (LedgerTables (ExtLedgerState (CardanoBlock StandardCrypto)) ValuesMK))
   where
     f :: Ord k => Consensus.LMDB.LMDBMK k v -> CodecMK k v -> LMDB.Transaction mode (ValuesMK k v)
-    f (Consensus.LMDB.LMDBMK _ db) cdc = ApplyValuesMK
-                        . DS.Values
-                       <$> Consensus.LMDB.foldrWithKey
-                            Map.insert
-                            Map.empty
-                            cdc
-                            db
+    f (Consensus.LMDB.LMDBMK _ db) (CodecMK encKey encVal decKey decVal) =
+      ApplyValuesMK . DS.Values <$>
+        LMDB.Cursor.runCursorAsTransaction
+          (LMDB.Codec.Codec encKey decKey)
+          (LMDB.Codec.Codec encVal decVal)
+          (LMDB.Cursor.forEachForward
+            (\acc k v -> Map.insert k v acc)
+            Map.empty
+          )
+          db
     -- Preferably, these settings should match the default configuration for
     -- @cardano-node@. There, we pick @'lmdbMapSize'@ and @'lmdbMaxDatabases'@
     -- such that they are sufficient for the medium term, i.e., until a more

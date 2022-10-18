@@ -291,5 +291,5 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/input-output-hk/lmdb-simple
-  tag: 78d8c59984bb4b5a26c90ac14ccca0dc39911da0
-  --sha256: 0dzkiv92pspk1i9ccfcn5qakbf3gndvgpni8xdxrvxy5455z16g5
+  tag: 6ca8d4e6dda901fc400dabdf1fb86ae009aa58e9
+  --sha256: 0npyj9cgj2w8bw5ppyxifc7vbl2adlx938ki8fdrga1qarh9sc59
