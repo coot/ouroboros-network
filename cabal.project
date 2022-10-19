@@ -66,16 +66,23 @@ constraints:
   -- version in CHaP. Unfortunately revisions in CHaP don't work yet, revisit this
   -- when we fix it.
 
+  -- cardano-prelude: newer protolude changes some signatures in a breaking way, fixed
+  -- in newer cardano-prelude which we can't use yet
+  , protolude < 0.3.1
   -- cardano-crypto-wrapper: broken by cardano-prelude-0.1.0.1 which moves HeapWords out
   , cardano-prelude < 0.1.0.1
   -- cardano-ledger-byron: broken by cardano-binary-1.5.0.1 which includes some functions
   -- that used to be in cardano-prelude
   , cardano-binary < 1.5.0.1
-  -- plutus: cardano-crypto-class-2.0.0.1 changes the signatures of some DSIGN functions for secp256k1
+  -- ledger: cardano-crypto-class-2.0.0.1 is missing some instances needed by the ledger
   , cardano-crypto-class < 2.0.0.1
-    -- cardano-crypto-tests: we required cardano-crypto-class-2.0.0.0 above, which is broken with
+  -- cardano-crypto-tests: we required cardano-crypto-class-2.0.0.0 above, which is broken with
   -- newer cardano-crypto-tests
   , cardano-crypto-tests < 2.0.0.1
+  -- plutus-core 1.0.0.1 has the fixed SECP primitives which relies on the newer cardano-crypto-class
+  , plutus-core < 1.0.0.1
+  -- plutus-core: needs a constraint here, fixed on plutus master but not in the released version
+  , algebraic-graphs < 0.7
 
 source-repository-package
   type: git
@@ -86,3 +93,19 @@ source-repository-package
     io-classes
     io-sim
     strict-stm
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/moo
+  tag: 8c487714fbfdea66188fcb85053e7e292e0cc348
+  --sha256: 1mdj218hgh7s5a6b9k14vg9i06zxah0wa42ycdgh245izs8nfv0x
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/typed-protocols
+  tag: 254a4f8520ff58bb80bf1468d279391c6002436e
+  --sha256: 1jpdlks39s9yih96kadzb6va0ag7c1l9510a0q98bj7gksng4218
+  subdir:
+    typed-protocols
+    typed-protocols-cborg
+    typed-protocols-examples
