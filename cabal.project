@@ -46,9 +46,6 @@ constraints:
   , ListLike >= 4.7.3
   , witherable >= 0.4
 
-  -- Plutus dependency
-  , algebraic-graphs < 0.7
-
 tests: True
 
 allow-newer:
@@ -109,3 +106,33 @@ source-repository-package
     typed-protocols
     typed-protocols-cborg
     typed-protocols-examples
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/cardano-ledger
+  tag: 49613f11e034485c8377945c86c0465726c0860c
+  --sha256: 0gxb9xghsacr0qaljhq3qzvmb2f1wwmly89prwqy4fdm9mvqiq95
+  subdir:
+    eras/alonzo/impl
+    eras/alonzo/test-suite
+    eras/babbage/impl
+    eras/babbage/test-suite
+    eras/byron/chain/executable-spec
+    eras/byron/crypto
+    eras/byron/crypto/test
+    eras/byron/ledger/executable-spec
+    eras/byron/ledger/impl
+    eras/byron/ledger/impl/test
+    eras/shelley-ma/impl
+    eras/shelley-ma/test-suite
+    eras/shelley/impl
+    eras/shelley/test-suite
+    libs/cardano-data
+    libs/cardano-ledger-core
+    libs/cardano-ledger-pretty
+    libs/cardano-protocol-tpraos
+    libs/non-integral
+    libs/set-algebra
+    libs/small-steps
+    libs/small-steps-test
+    libs/vector-map
