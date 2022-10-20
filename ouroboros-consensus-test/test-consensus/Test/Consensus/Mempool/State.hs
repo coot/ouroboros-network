@@ -64,25 +64,24 @@ import Debug.Trace
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Text.Layout.Table
+import Ouroboros.Consensus.Storage.LedgerDB.HD.DiffSeq
+import Data.List.NonEmpty (NonEmpty)
 
 {-------------------------------------------------------------------------------
   Generation
 -------------------------------------------------------------------------------}
 
-genListOfStates :: SlotNo
-                  -> LedgerState TestBlock ValuesMK
-                  -> Gen [(SlotNo, LedgerState TestBlock DiffMK)]
-genListOfStates anchorSlot firstState = do
-  slots <- listOf1 (fmap SlotNo $ arbitrary `suchThat` (> unSlotNo anchorSlot))
-  traceM $ show slots
-  valueChangelog <- snd <$> foldM (\(lastValues, acc) s ->  do
+genListOfStates :: LedgerState TestBlock ValuesMK
+                  -> Gen (NonEmpty (LedgerState TestBlock ValuesMK))
+genListOfStates firstState = do
+  numStates <- listOf1 (pure ())
+  valueChangelog <- snd <$> foldM (\(lastValues, acc) () ->  do
                                       nextValues <- nextRandomState lastValues
-                                      let diffed = nextValues `withLedgerTables` zipLedgerTables (\a b -> rawForgetValues $ rawCalculateDifference a b) (projectLedgerTables lastValues) (projectLedgerTables nextValues)
-                                      pure (nextValues, (withOrigin' $ getTipSlot nextValues, diffed):acc)) (firstState, []) (sort slots)
-  pure $ reverse valueChangelog
 
-foo st mch = pure $ GetSnapshotFor st mch
+                                      pure (nextValues, nextValues:acc)) (firstState, []) numStates
+  pure $ fromJust $ NE.nonEmpty $ reverse valueChangelog
 
+thd :: (a, b, c) -> c
 thd (_, _, c) = c
 
 generator ::
@@ -97,40 +96,34 @@ generator lcfg = \case
   model     -> Just $ frequency $
    [ (2, fmap TryAddTxs $ listOf $ oneof
          [ arbitrary
-         , TestGenTx <$> genSucceedingTransaction (mockTip (modelBackingStore model) `withLedgerTables` thd (NE.last (mockTables (modelBackingStore model)))) <*> fmap TestTxId arbitrary
+         , TestGenTx <$> genSucceedingTransaction (NE.last (modelLedgerDB model)) <*> fmap TestTxId arbitrary
          ])
    , (1, pure GetSnapshot)
    , (1, do
-         let (anchorSlot, anchorSt, anchorValues) = NE.head $ mockTables $ modelBackingStore model
-             pds = anchorSt { payloadDependentState  = UTxTok anchorValues $ utxhist $ payloadDependentState anchorSt }
-             --     ^ This cannot be mockTip? it has to be mockAnchor, but I don't have that one hmm
-         valueChangelog <- genListOfStates anchorSlot pds
-         let mch = MempoolChangelog (At anchorSlot) $ foldl' (\acc (s, d) -> zipLedgerTables (f s) acc (projectLedgerTables d) ) polyEmptyLedgerTables valueChangelog
-         let tip = snd (last valueChangelog)
+         let anchorSt = NE.head $ modelLedgerDB model
+             pds = anchorSt { payloadDependentState  = UTxTok (projectLedgerTables anchorSt) $ utxhist $ payloadDependentState anchorSt }
+         valueChangelog <- genListOfStates pds
+         let tip = NE.last valueChangelog
          let st = applyChainTick lcfg ((+1) . withOrigin' . pointSlot $ getTip tip) (forgetLedgerTables tip)
-         foo st mch)
+         pure $ GetSnapshotFor st $ NE.toList valueChangelog)
    , (1, do
          case modelNextSync model of
            Nothing -> do
-             let (anchorSlot, anchorSt, anchorValues) = NE.head $ mockTables $ modelBackingStore model
-                 pds = anchorSt { payloadDependentState  = UTxTok anchorValues $ utxhist $ payloadDependentState anchorSt }
-             valueChangelog <- genListOfStates anchorSlot pds
-             pure $ UnsyncTip (forgetLedgerTables $ snd (last valueChangelog)) $ fromJust $ NE.nonEmpty $ map (\(s, st) -> (s, forgetLedgerTables st, projectLedgerTables st))  valueChangelog
-           Just m -> do
-             let (anchorSlot, anchorSt, anchorValues) = NE.head $ mockTables m
-                 pds = anchorSt { payloadDependentState  = UTxTok anchorValues $ utxhist $ payloadDependentState anchorSt }
-             valueChangelog <- genListOfStates anchorSlot pds
-             pure $ UnsyncTip (forgetLedgerTables $ snd (last valueChangelog)) $ fromJust $ NE.nonEmpty $ map (\(s, st) -> (s, forgetLedgerTables st, projectLedgerTables st))  valueChangelog
+             let anchorSt = NE.head $ modelLedgerDB model
+             valueChangelog <- genListOfStates anchorSt
+             pure $ UnsyncTip valueChangelog
+           Just nldb -> do
+             let anchorSt = NE.head nldb
+             valueChangelog <- genListOfStates anchorSt
+             pure $ UnsyncTip valueChangelog
      )
-   , (1, case modelNextSync model of
-         Nothing -> UnsyncAnchor   <$> (arbitrary `suchThat` (< fromIntegral (NE.length (mockTables (modelBackingStore model)))))
-         Just nx -> UnsyncAnchor   <$> (arbitrary `suchThat` (< fromIntegral (NE.length (mockTables nx)))))
+   , (1, pure UnsyncAnchor)
    , (1, pure SyncLedger)
    ]
    where
 
-     f :: Ord k => SlotNo -> SeqDiffMK k v -> DiffMK k v -> SeqDiffMK k v
-     f sl (ApplySeqDiffMK sq) (ApplyDiffMK d) = ApplySeqDiffMK $ extendSeqUtxoDiff sq sl d
+     f :: (Ord k, Eq v) => SlotNo -> SeqDiffMK k v -> DiffMK k v -> SeqDiffMK k v
+     f sl (ApplySeqDiffMK sq) (ApplyDiffMK d) = ApplySeqDiffMK $ extend sq sl d
 
 rawForgetValues :: TrackingMK k v -> DiffMK k v
 rawForgetValues (ApplyTrackingMK _ d) = ApplyDiffMK d
@@ -181,7 +174,7 @@ prop_mempoolParallel :: ( LedgerSupportsMempool TestBlock
       ) => Proxy TestBlock -> LedgerConfig TestBlock -> Bool -> Property
 prop_mempoolParallel _ lcfg trc = forAllParallelCommands (sm lcfg trc) Nothing $ \cmds ->
     monadic (\p   -> counterexample (treeDraw cmds) $ ioProperty $ do
-                -- putStrLn $ treeDraw cmds
+                putStrLn $ treeDraw cmds
                 ref <- newIORef undefined
                 flip runReaderT ref p
             )
@@ -189,7 +182,7 @@ prop_mempoolParallel _ lcfg trc = forAllParallelCommands (sm lcfg trc) Nothing $
 
 treeDraw :: Show (cmd Symbolic) => ParallelCommandsF Pair cmd resp -> String
 treeDraw (ParallelCommands prefix suffixes) =
-  "TEST CASE\nPrefix\n" ++ (unlines $ map ('\t':) $ lines (tableString [def]
+  "\nTEST CASE\nPrefix\n" ++ (unlines $ map ('\t':) $ lines (tableString [def]
     unicodeRoundS
     def
     (map (\(Command c _ _) -> rowG [head $ words $ show c]) (unCommands prefix))

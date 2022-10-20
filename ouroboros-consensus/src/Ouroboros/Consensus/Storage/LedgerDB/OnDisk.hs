@@ -538,16 +538,17 @@ newBackingStore tracer bss someHasFS tables =
       limits
       someHasFS
       (LMDB.LIInitialiseFromMemory Origin tables)
-    InMemoryBackingStore -> fmap snd $ createTVarBackingStore tables
+    InMemoryBackingStore -> createTVarBackingStore tables
 
-createTVarBackingStore :: ( IOLike m
-                          , NoThunks (LedgerTables l ValuesMK)
-                          , TableStuff l
-                          , SufficientSerializationForAnyBackingStore l) =>
-                          LedgerTables l ValuesMK
-                       -> m (m (Maybe (WithOrigin SlotNo, LedgerTables l ValuesMK)), LedgerBackingStore m l)
-createTVarBackingStore tables = do
-   (a, b) <- BackingStore.newTVarBackingStore'
+createTVarBackingStore ::
+  ( IOLike m
+  , NoThunks (LedgerTables l ValuesMK)
+  , TableStuff l
+  , SufficientSerializationForAnyBackingStore l)
+  => LedgerTables l ValuesMK
+  -> m (LedgerBackingStore m l)
+createTVarBackingStore tables =
+  LedgerBackingStore <$> BackingStore.newTVarBackingStore
                (zipLedgerTables lookup_)
                (\rq values -> case BackingStore.rqPrev rq of
                    Nothing   ->
@@ -559,7 +560,6 @@ createTVarBackingStore tables = do
                valuesMKEncoder
                valuesMKDecoder
                (Right (Origin, tables))
-   pure (a, LedgerBackingStore b)
 
 lookup_ ::
      Ord k

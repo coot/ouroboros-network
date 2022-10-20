@@ -704,6 +704,8 @@ newLMDBBackingStore dbTracer limits sfs initDb = do
         pure (dbsSeq, s {dbsSeq = At slot})
       Trace.traceWith dbTracer $ TDBWrite oldSlot slot
 
+    unsafeRead = pure $ error "Must not be called"
+
   -- now initialise those tables if appropriate
   initAction db
 

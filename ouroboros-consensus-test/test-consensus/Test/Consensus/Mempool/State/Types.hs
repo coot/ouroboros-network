@@ -2,13 +2,12 @@
 {-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE DerivingStrategies   #-}
 {-# LANGUAGE FlexibleContexts     #-}
-{-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE PolyKinds            #-}
 {-# LANGUAGE StandaloneDeriving   #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-partial-fields #-}
--- |
 
 module Test.Consensus.Mempool.State.Types (
     -- * Actions
@@ -16,7 +15,7 @@ module Test.Consensus.Mempool.State.Types (
   , Response (..)
     -- * Model
   , MempoolAddTxResultPlus (..)
-  , MockLedgerDB(..)
+  , MockLedgerDB
   , Model (..)
   , initModel
     -- * Helpers
@@ -26,11 +25,9 @@ module Test.Consensus.Mempool.State.Types (
 import           Data.Kind
 import           Data.List.NonEmpty (NonEmpty)
 import           GHC.Generics
-                   (Generic1, Generic)
+import           GHC.Stack (HasCallStack)
 
 import           Cardano.Slotting.Slot
-
-import           Data.TreeDiff.Class (genericToExpr)
 
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.SupportsMempool
@@ -46,7 +43,7 @@ import qualified Test.StateMachine.Types.Rank2 as Rank2
 -------------------------------------------------------------------------------}
 data Action blk (r     :: Type -> Type)
     -- | Initialize the mempool and mock ledger DB with this state
- = Init { stateForInit :: !(LedgerState blk ValuesMK) }
+  = Init { stateForInit :: !(LedgerState blk ValuesMK) }
 
     -- | Try to add the given transactions into the mempool
   | TryAddTxs { txsToAdd :: ![GenTx blk] }
@@ -60,21 +57,22 @@ data Action blk (r     :: Type -> Type)
     -- | Request a snapshot for a specific ledger state
   | GetSnapshotFor
       { snapshotState     :: !(TickedLedgerState blk DiffMK),
-        snapshotChangelog :: !(MempoolChangelog blk)
+        snapshotChangelog :: ![LedgerState blk ValuesMK]
       }
 
     -- | Make the ledger go out of sync with the mempool by giving a new tip + diffs
     --
     -- This means @switchToFork@
   | UnsyncTip
-      { unsyncTip   :: !(LedgerState blk EmptyMK),
-        unsyncDiffs :: !(NonEmpty (SlotNo, LedgerState blk EmptyMK, LedgerTables (LedgerState blk) DiffMK))
+      { unsyncStates :: !(NonEmpty (LedgerState blk ValuesMK))
       }
 
-    -- | Make the ledger go out of sync moving the anchor forward
+    -- | Make the ledger go out of sync moving the anchor forward. I don't care
+    -- that it moves one or many, as long as it moves, so it will always move
+    -- one.
     --
     -- This means @flush@
-  | UnsyncAnchor { moveAnchor :: !Word }
+  | UnsyncAnchor
 
   deriving stock Generic1
   deriving anyclass (Rank2.Functor, Rank2.Foldable, Rank2.Traversable, CommandNames)
@@ -161,18 +159,7 @@ deriving instance ( Show (Validated (GenTx blk))
 --  * fst (NE.last mockTables) = slot mockTip
 --
 --  * sorted (NE.map fst mockTables)
-data MockLedgerDB blk          = MockLedgerDB
-  { mockTip    :: !(LedgerState blk EmptyMK)
-  , mockTables :: !(NonEmpty (SlotNo, LedgerState blk EmptyMK, LedgerTables (LedgerState blk) ValuesMK))
-  } deriving (Generic)
-
-
-deriving instance ( Eq (LedgerState blk EmptyMK)
-                  , Eq (LedgerTables (LedgerState blk) ValuesMK)
-                  ) => Eq (MockLedgerDB blk)
-deriving instance ( Show (LedgerState blk EmptyMK)
-                  , Show (LedgerTables (LedgerState blk) ValuesMK)
-                  ) => Show (MockLedgerDB blk)
+type MockLedgerDB blk          = NonEmpty (LedgerState blk ValuesMK)
 
 data Model blk (r :: Type -> Type) =
     -- | The model is yet to be initialized
@@ -189,9 +176,9 @@ data Model blk (r :: Type -> Type) =
       , modelTicket :: !TicketNo
 
         -- | A mocking backing store
-      , modelBackingStore :: !(MockLedgerDB blk)
+      , modelLedgerDB :: !(MockLedgerDB blk)
 
-      , modelCapacity     :: !MempoolCapacityBytes
+      , modelCapacity :: !MempoolCapacityBytes
         -- | This might hols a new LedgerDB if we have to resync. Further
         -- unsyncs will modify this value.
       , modelNextSync :: !(Maybe (MockLedgerDB blk))
@@ -200,11 +187,11 @@ data Model blk (r :: Type -> Type) =
 
 
 deriving instance ( Eq (TickedLedgerState blk ValuesMK)
-                  , Eq (MockLedgerDB blk)
+                  , Eq (LedgerState blk ValuesMK)
                   , Eq (TxSeq (Validated (GenTx blk)))
                   ) => Eq (Model blk r)
 deriving instance ( Show (TickedLedgerState blk ValuesMK)
-                  , Show (MockLedgerDB blk)
+                  , Show (LedgerState blk ValuesMK)
                   , Show (Validated (GenTx blk))
                   ) => Show (Model blk r)
 
@@ -215,5 +202,5 @@ initModel = NeedsInit
   Helpers
 -------------------------------------------------------------------------------}
 
-withOrigin' :: WithOrigin b -> b
-withOrigin' = withOrigin undefined id
+withOrigin' :: HasCallStack => WithOrigin b -> b
+withOrigin' = withOrigin (error "unexpected origin") id
