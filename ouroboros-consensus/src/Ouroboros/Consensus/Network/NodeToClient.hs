@@ -109,16 +109,16 @@ data Handlers m peer blk = Handlers {
     }
 
 mkHandlers
-  :: forall m blk remotePeer localPeer.
+  :: forall m blk addrNTN localPeer.
      ( IOLike m
      , LedgerSupportsMempool blk
      , LedgerSupportsProtocol blk
      , QueryLedger blk
      , ConfigSupportsNode blk
      )
-  => NodeKernelArgs m remotePeer localPeer blk
-  -> NodeKernel     m remotePeer localPeer blk
-  -> Handlers       m            localPeer blk
+  => NodeKernelArgs m addrNTN localPeer blk
+  -> NodeKernel     m addrNTN localPeer blk
+  -> Handlers       m         localPeer blk
 mkHandlers NodeKernelArgs {cfg, tracers} NodeKernel {getChainDB, getMempool} =
     Handlers {
         hChainSyncServer =
@@ -383,7 +383,7 @@ data Apps m peer bCS bTX bSQ bTM a = Apps {
 
 -- | Construct the 'NetworkApplication' for the node-to-client protocols
 mkApps
-  :: forall m remotePeer localPeer blk e bCS bTX bSQ bTM.
+  :: forall m addrNTN localPeer blk e bCS bTX bSQ bTM.
      ( IOLike m
      , Exception e
      , ShowProxy blk
@@ -393,7 +393,7 @@ mkApps
      , ShowProxy (GenTxId blk)
      , ShowQuery (BlockQuery blk)
      )
-  => NodeKernel m remotePeer localPeer blk
+  => NodeKernel m addrNTN localPeer blk
   -> Tracers m localPeer blk e
   -> Codecs blk e m bCS bTX bSQ bTM
   -> Handlers m localPeer blk

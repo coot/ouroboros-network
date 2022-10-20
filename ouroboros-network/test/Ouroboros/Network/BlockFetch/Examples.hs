@@ -47,7 +47,8 @@ import           Ouroboros.Network.BlockFetch.Client
 import           Ouroboros.Network.Channel
 import           Ouroboros.Network.DeltaQ
 import           Ouroboros.Network.Driver
-import           Ouroboros.Network.NodeToNode (NodeToNodeVersion (..))
+import           Ouroboros.Network.NodeToNode (ConnectionId (ConnectionId),
+                     NodeToNodeVersion (..))
 import qualified Ouroboros.Network.NodeToNode as NodeToNode
 import           Ouroboros.Network.Protocol.BlockFetch.Codec
 import           Ouroboros.Network.Protocol.BlockFetch.Server
@@ -62,11 +63,11 @@ import           Ouroboros.Network.Testing.ConcreteBlock
 blockFetchExample0 :: forall m.
                       (MonadSTM m, MonadST m, MonadAsync m, MonadFork m,
                        MonadTime m, MonadTimer m, MonadMask m, MonadThrow (STM m))
-                   => Tracer m [TraceLabelPeer Int
+                   => Tracer m [TraceLabelPeer (ConnectionId Int)
                                  (FetchDecision [Point BlockHeader])]
-                   -> Tracer m (TraceLabelPeer Int
+                   -> Tracer m (TraceLabelPeer (ConnectionId Int)
                                  (TraceFetchClientState BlockHeader))
-                   -> Tracer m (TraceLabelPeer Int
+                   -> Tracer m (TraceLabelPeer (ConnectionId Int)
                                  (TraceSendRecv (BlockFetch Block (Point Block))))
                    -> Maybe DiffTime -- ^ client's channel delay
                    -> Maybe DiffTime -- ^ servers's channel delay
@@ -79,7 +80,7 @@ blockFetchExample0 decisionTracer clientStateTracer clientMsgTracer
                    controlMessageSTM
                    currentChain candidateChain = do
 
-    registry    <- newFetchClientRegistry :: m (FetchClientRegistry Int BlockHeader Block m)
+    registry    <- newFetchClientRegistry :: m (FetchClientRegistry (ConnectionId Int) BlockHeader Block m)
     blockHeap   <- mkTestFetchedBlockHeap (anchoredChainPoints currentChain)
 
     (clientAsync, serverAsync, syncClientAsync, keepAliveAsync)
@@ -110,7 +111,8 @@ blockFetchExample0 decisionTracer clientStateTracer clientMsgTracer
     return ()
 
   where
-    peerno = 1 :: Int
+    local = 0
+    peerno = ConnectionId local 1
 
     serverMsgTracer = nullTracer
 
@@ -118,13 +120,13 @@ blockFetchExample0 decisionTracer clientStateTracer clientMsgTracer
       AnchoredFragment.mapAnchoredFragment blockHeader currentChain
 
     candidateChainHeaders =
-      Map.fromList $ zip [1..] $
+      Map.fromList $ zip (map (ConnectionId local) [1..]) $
       map (AnchoredFragment.mapAnchoredFragment blockHeader) [candidateChain]
 
     anchoredChainPoints c = anchorPoint c
                           : map blockPoint (AnchoredFragment.toOldestFirst c)
 
-    blockFetch :: FetchClientRegistry Int BlockHeader Block m
+    blockFetch :: FetchClientRegistry (ConnectionId Int) BlockHeader Block m
                -> TestFetchedBlockHeap m Block
                -> m ()
     blockFetch registry blockHeap =
@@ -170,11 +172,11 @@ blockFetchExample0 decisionTracer clientStateTracer clientMsgTracer
 blockFetchExample1 :: forall m.
                       (MonadSTM m, MonadST m, MonadAsync m, MonadFork m,
                        MonadTime m, MonadTimer m, MonadMask m, MonadThrow (STM m))
-                   => Tracer m [TraceLabelPeer Int
+                   => Tracer m [TraceLabelPeer (ConnectionId Int)
                                  (FetchDecision [Point BlockHeader])]
-                   -> Tracer m (TraceLabelPeer Int
+                   -> Tracer m (TraceLabelPeer (ConnectionId Int)
                                  (TraceFetchClientState BlockHeader))
-                   -> Tracer m (TraceLabelPeer Int
+                   -> Tracer m (TraceLabelPeer (ConnectionId Int)
                                  (TraceSendRecv (BlockFetch Block (Point Block))))
                    -> Maybe DiffTime -- ^ client's channel delay
                    -> Maybe DiffTime -- ^ server's channel delay
@@ -200,7 +202,7 @@ blockFetchExample1 decisionTracer clientStateTracer clientMsgTracer
                         registry peerno
                         (blockFetchClient NodeToNodeV_7 controlMessageSTM nullTracer)
                         (mockBlockFetchServer1 candidateChain)
-                    | (peerno, candidateChain) <- zip [1..] candidateChains
+                    | (peerno, candidateChain) <- zip (map (ConnectionId local) [1..]) candidateChains
                     ]
     fetchAsync  <- async $ do
       threadId <- myThreadId
@@ -220,19 +222,20 @@ blockFetchExample1 decisionTracer clientStateTracer clientMsgTracer
     return ()
 
   where
+    local = 0
     serverMsgTracer = nullTracer
 
     currentChainHeaders =
       AnchoredFragment.mapAnchoredFragment blockHeader currentChain
 
     candidateChainHeaders =
-      Map.fromList $ zip [1..] $
+      Map.fromList $ zip (map (ConnectionId local) [1..]) $
       map (AnchoredFragment.mapAnchoredFragment blockHeader) candidateChains
 
     anchoredChainPoints c = anchorPoint c
                           : map blockPoint (AnchoredFragment.toOldestFirst c)
 
-    blockFetch :: FetchClientRegistry Int BlockHeader Block m
+    blockFetch :: FetchClientRegistry (ConnectionId Int) BlockHeader Block m
                -> TestFetchedBlockHeap m Block
                -> m ()
     blockFetch registry blockHeap =

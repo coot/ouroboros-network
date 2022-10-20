@@ -291,14 +291,14 @@ applications nodeKernel
       :: ConnectionId NtNAddr
       -> ControlMessageSTM m
       -> MuxPeer ByteString m ()
-    chainSyncInitiator ConnectionId { remoteAddress }
+    chainSyncInitiator cid
                        controlMessageSTM =
       MuxPeerRaw $ \channel -> do
         labelThisThread "ChainSyncClient"
         bracketSyncWithFetchClient (nkFetchClientRegistry nodeKernel)
-                                   remoteAddress $
-          bracket (registerClientChains nodeKernel remoteAddress)
-                  (\_ -> unregisterClientChains nodeKernel remoteAddress)
+                                   (remoteAddress cid) $
+          bracket (registerClientChains nodeKernel cid)
+                  (\_ -> unregisterClientChains nodeKernel cid)
                   (\chainVar ->
                     runPeerWithLimits
                       nullTracer

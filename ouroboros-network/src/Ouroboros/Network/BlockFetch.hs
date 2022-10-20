@@ -124,6 +124,7 @@ import           Ouroboros.Network.BlockFetch.ClientRegistry
 import           Ouroboros.Network.BlockFetch.ClientState (FromConsensus (..),
                      WhetherReceivingTentativeBlocks (..))
 import           Ouroboros.Network.BlockFetch.State
+import           Ouroboros.Network.ConnectionId (ConnectionId)
 
 
 -- | The consensus layer functionality that the block fetch logic requires.
@@ -263,20 +264,20 @@ data BlockFetchConfiguration =
 --
 -- This runs forever and should be shut down using mechanisms such as async.
 --
-blockFetchLogic :: forall peer header block m.
+blockFetchLogic :: forall addr header block m.
                    ( HasHeader header
                    , HasHeader block
                    , HeaderHash header ~ HeaderHash block
                    , MonadDelay m
                    , MonadMonotonicTime m
                    , MonadSTM m
-                   , Ord peer
-                   , Hashable peer
+                   , Ord addr
+                   , Hashable addr
                    )
-                => Tracer m [TraceLabelPeer peer (FetchDecision [Point header])]
-                -> Tracer m (TraceLabelPeer peer (TraceFetchClientState header))
-                -> BlockFetchConsensusInterface peer header block m
-                -> FetchClientRegistry peer header block m
+                => Tracer m [TraceLabelPeer (ConnectionId addr) (FetchDecision [Point header])]
+                -> Tracer m (TraceLabelPeer (ConnectionId addr) (TraceFetchClientState header))
+                -> BlockFetchConsensusInterface (ConnectionId addr) header block m
+                -> FetchClientRegistry (ConnectionId addr) header block m
                 -> BlockFetchConfiguration
                 -> m Void
 blockFetchLogic decisionTracer clientStateTracer
@@ -316,7 +317,7 @@ blockFetchLogic decisionTracer clientStateTracer
         blockFetchSize
       }
 
-    fetchTriggerVariables :: FetchTriggerVariables peer header m
+    fetchTriggerVariables :: FetchTriggerVariables (ConnectionId addr) header m
     fetchTriggerVariables =
       FetchTriggerVariables {
         readStateCurrentChain    = readCurrentChain,
@@ -324,7 +325,7 @@ blockFetchLogic decisionTracer clientStateTracer
         readStatePeerStatus      = readFetchClientsStatus registry
       }
 
-    fetchNonTriggerVariables :: FetchNonTriggerVariables peer header block m
+    fetchNonTriggerVariables :: FetchNonTriggerVariables (ConnectionId addr) header block m
     fetchNonTriggerVariables =
       FetchNonTriggerVariables {
         readStateFetchedBlocks    = readFetchedBlocks,

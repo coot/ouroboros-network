@@ -44,7 +44,8 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      AnchoredSeq (..))
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.BlockFetch
-import           Ouroboros.Network.NodeToNode (MiniProtocolParameters (..))
+import           Ouroboros.Network.NodeToNode (ConnectionId,
+                     MiniProtocolParameters (..))
 import           Ouroboros.Network.TxSubmission.Inbound
                      (TxSubmissionMempoolWriter)
 import qualified Ouroboros.Network.TxSubmission.Inbound as Inbound
@@ -74,6 +75,7 @@ import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM
 
+import           Data.Data (Typeable)
 import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
@@ -85,7 +87,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
 -------------------------------------------------------------------------------}
 
 -- | Interface against running relay node
-data NodeKernel m remotePeer localPeer blk = NodeKernel {
+data NodeKernel m addrNTN localPeer blk = NodeKernel {
       -- | The 'ChainDB' of the node
       getChainDB             :: ChainDB m blk
 
@@ -96,22 +98,22 @@ data NodeKernel m remotePeer localPeer blk = NodeKernel {
     , getTopLevelConfig      :: TopLevelConfig blk
 
       -- | The fetch client registry, used for the block fetch clients.
-    , getFetchClientRegistry :: FetchClientRegistry remotePeer (Header blk) blk m
+    , getFetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (Header blk) blk m
 
       -- | The fetch mode, used by diffusion.
       --
     , getFetchMode           :: STM m FetchMode
 
       -- | Read the current candidates
-    , getNodeCandidates      :: StrictTVar m (Map remotePeer (StrictTVar m (AnchoredFragment (Header blk))))
+    , getNodeCandidates      :: StrictTVar m (Map (ConnectionId addrNTN) (StrictTVar m (AnchoredFragment (Header blk))))
 
       -- | The node's tracers
-    , getTracers             :: Tracers m remotePeer localPeer blk
+    , getTracers             :: Tracers m (ConnectionId addrNTN) localPeer blk
     }
 
 -- | Arguments required when initializing a node
-data NodeKernelArgs m remotePeer localPeer blk = NodeKernelArgs {
-      tracers                 :: Tracers m remotePeer localPeer blk
+data NodeKernelArgs m addrNTN localPeer blk = NodeKernelArgs {
+      tracers                 :: Tracers m (ConnectionId addrNTN) localPeer blk
     , registry                :: ResourceRegistry m
     , cfg                     :: TopLevelConfig blk
     , btime                   :: BlockchainTime m
@@ -126,15 +128,15 @@ data NodeKernelArgs m remotePeer localPeer blk = NodeKernelArgs {
     }
 
 initNodeKernel
-    :: forall m remotePeer localPeer blk.
+    :: forall m addrNTN localPeer blk.
        ( IOLike m
        , RunNode blk
-       , NoThunks remotePeer
-       , Ord remotePeer
-       , Hashable remotePeer
+       , Typeable addrNTN
+       , Ord addrNTN
+       , Hashable addrNTN
        )
-    => NodeKernelArgs m remotePeer localPeer blk
-    -> m (NodeKernel m remotePeer localPeer blk)
+    => NodeKernelArgs m addrNTN localPeer blk
+    -> m (NodeKernel m addrNTN localPeer blk)
 initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                    , blockForging, chainDB, initChainDB
                                    , blockFetchConfiguration
@@ -173,28 +175,28 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
   Internal node components
 -------------------------------------------------------------------------------}
 
-data InternalState m remotePeer localPeer blk = IS {
-      tracers             :: Tracers m remotePeer localPeer blk
+data InternalState m addrNTN localPeer blk = IS {
+      tracers             :: Tracers m (ConnectionId addrNTN) localPeer blk
     , cfg                 :: TopLevelConfig blk
     , registry            :: ResourceRegistry m
     , btime               :: BlockchainTime m
     , chainDB             :: ChainDB m blk
-    , blockFetchInterface :: BlockFetchConsensusInterface remotePeer (Header blk) blk m
-    , fetchClientRegistry :: FetchClientRegistry remotePeer (Header blk) blk m
-    , varCandidates       :: StrictTVar m (Map remotePeer (StrictTVar m (AnchoredFragment (Header blk))))
+    , blockFetchInterface :: BlockFetchConsensusInterface (ConnectionId addrNTN) (Header blk) blk m
+    , fetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (Header blk) blk m
+    , varCandidates       :: StrictTVar m (Map (ConnectionId addrNTN) (StrictTVar m (AnchoredFragment (Header blk))))
     , mempool             :: Mempool m blk TicketNo
     }
 
 initInternalState
-    :: forall m remotePeer localPeer blk.
+    :: forall m addrNTN localPeer blk.
        ( IOLike m
        , LedgerSupportsProtocol blk
-       , Ord remotePeer
-       , NoThunks remotePeer
+       , Ord addrNTN
+       , Typeable addrNTN
        , RunNode blk
        )
-    => NodeKernelArgs m remotePeer localPeer blk
-    -> m (InternalState m remotePeer localPeer blk)
+    => NodeKernelArgs m addrNTN localPeer blk
+    -> m (InternalState m addrNTN localPeer blk)
 initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
                                  , blockFetchSize, btime
                                  , mempoolCapacityOverride
@@ -209,14 +211,14 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
 
     fetchClientRegistry <- newFetchClientRegistry
 
-    let getCandidates :: STM m (Map remotePeer (AnchoredFragment (Header blk)))
+    let getCandidates :: STM m (Map (ConnectionId addrNTN) (AnchoredFragment (Header blk)))
         getCandidates = readTVar varCandidates >>= traverse readTVar
 
     slotForgeTimeOracle <- BlockFetchClientInterface.initSlotForgeTimeOracle cfg chainDB
     let readFetchMode = BlockFetchClientInterface.readFetchModeDefault
           btime
           (ChainDB.getCurrentChain chainDB)
-        blockFetchInterface :: BlockFetchConsensusInterface remotePeer (Header blk) blk m
+        blockFetchInterface :: BlockFetchConsensusInterface (ConnectionId addrNTN) (Header blk) blk m
         blockFetchInterface = BlockFetchClientInterface.mkBlockFetchConsensusInterface
           (configBlock cfg)
           (BlockFetchClientInterface.defaultChainDbView chainDB)
@@ -228,9 +230,9 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
     return IS {..}
 
 forkBlockForging
-    :: forall m remotePeer localPeer blk.
+    :: forall m addrNTN localPeer blk.
        (IOLike m, RunNode blk)
-    => InternalState m remotePeer localPeer blk
+    => InternalState m addrNTN localPeer blk
     -> BlockForging m blk
     -> m ()
 forkBlockForging IS{..} blockForging =
@@ -586,7 +588,7 @@ getMempoolWriter mempool = Inbound.TxSubmissionMempoolWriter
 -- justifies merging the future and current stake pools.
 getPeersFromCurrentLedger ::
      (IOLike m, LedgerSupportsPeerSelection blk)
-  => NodeKernel m remotePeer localPeer blk
+  => NodeKernel m addrNTN localPeer blk
   -> (LedgerState blk -> Bool)
   -> STM m (Maybe [(PoolStake, NonEmpty RelayAccessPoint)])
 getPeersFromCurrentLedger kernel p = do
@@ -602,12 +604,12 @@ getPeersFromCurrentLedger kernel p = do
 -- | Like 'getPeersFromCurrentLedger' but with a \"after slot number X\"
 -- condition.
 getPeersFromCurrentLedgerAfterSlot ::
-     forall m blk localPeer remotePeer.
+     forall m blk addrNTN localPeer .
      ( IOLike m
      , LedgerSupportsPeerSelection blk
      , UpdateLedger blk
      )
-  => NodeKernel m remotePeer localPeer blk
+  => NodeKernel m addrNTN localPeer blk
   -> SlotNo
   -> STM m (Maybe [(PoolStake, NonEmpty RelayAccessPoint)])
 getPeersFromCurrentLedgerAfterSlot kernel slotNo =

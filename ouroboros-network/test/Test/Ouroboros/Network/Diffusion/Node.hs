@@ -98,6 +98,7 @@ import           Ouroboros.Network.Testing.Data.Script (Script (..))
 
 import           Simulation.Network.Snocket (AddressType (..), FD)
 
+import           Ouroboros.Network.ConnectionId (ConnectionId)
 import qualified Test.Ouroboros.Network.Diffusion.Node.MiniProtocols as Node
 import qualified Test.Ouroboros.Network.Diffusion.Node.NodeKernel as Node
 import           Test.Ouroboros.Network.Diffusion.Node.NodeKernel
@@ -250,7 +251,7 @@ run blockGeneratorArgs limits ni na tracersExtra =
               <> wait blockFetchLogicThread
               <> wait nodeKernelThread
   where
-    blockFetch :: FetchClientRegistry NtNAddr BlockHeader Block m
+    blockFetch :: FetchClientRegistry (ConnectionId NtNAddr) BlockHeader Block m
                -> NodeKernel BlockHeader Block m
                -> m Void
     blockFetch registry nodeKernel = do
@@ -271,7 +272,7 @@ run blockGeneratorArgs limits ni na tracersExtra =
 
     blockFetchPolicy :: LazySTM.TVar m (Set (Point Block))
                      -> NodeKernel BlockHeader Block m
-                     -> BlockFetchConsensusInterface NtNAddr BlockHeader Block m
+                     -> BlockFetchConsensusInterface (ConnectionId NtNAddr) BlockHeader Block m
     blockFetchPolicy blockHeapVar nodeKernel =
         BlockFetchConsensusInterface {
           readCandidateChains    = readTVar (nkClientChains nodeKernel)

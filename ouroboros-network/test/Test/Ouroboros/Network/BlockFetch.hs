@@ -45,7 +45,8 @@ import           Ouroboros.Network.BlockFetch.Examples
 import           Ouroboros.Network.Driver (TraceSendRecv)
 import qualified Ouroboros.Network.MockChain.Chain as Chain
 import           Ouroboros.Network.Mux (ControlMessage (..), continueForever)
-import           Ouroboros.Network.NodeToNode (isPipeliningEnabled)
+import           Ouroboros.Network.NodeToNode (ConnectionId (ConnectionId),
+                     isPipeliningEnabled)
 import           Ouroboros.Network.Protocol.BlockFetch.Type (BlockFetch)
 import           Ouroboros.Network.Testing.ConcreteBlock
 
@@ -204,11 +205,11 @@ chainPoints = map (castPoint . blockPoint)
             . AnchoredFragment.toOldestFirst
 
 data Example1TraceEvent =
-     TraceFetchDecision       [TraceLabelPeer Int
+     TraceFetchDecision       [TraceLabelPeer (ConnectionId Int)
                                 (FetchDecision [Point BlockHeader])]
-   | TraceFetchClientState    (TraceLabelPeer Int
+   | TraceFetchClientState    (TraceLabelPeer (ConnectionId Int)
                                 (TraceFetchClientState BlockHeader))
-   | TraceFetchClientSendRecv (TraceLabelPeer Int
+   | TraceFetchClientSendRecv (TraceLabelPeer (ConnectionId Int)
                                 (TraceSendRecv (BlockFetch Block (Point Block))))
 
 instance Show Example1TraceEvent where
@@ -241,14 +242,15 @@ tracePropertyBlocksRequestedAndRecievedPerPeer fork1 fork2 es =
       requestedFetchPoints === requiredFetchPoints
  .&&. receivedFetchPoints  === requiredFetchPoints
   where
+    local = 0
     requiredFetchPoints =
       Map.filter (not . Prelude.null) $
       Map.fromList $
-        [ (1, chainPoints fork1)
-        , (2, chainPoints fork2)
+        [ (ConnectionId local 1, chainPoints fork1)
+        , (ConnectionId local 2, chainPoints fork2)
         ]
 
-    requestedFetchPoints :: Map Int [Point BlockHeader]
+    requestedFetchPoints :: Map (ConnectionId Int) [Point BlockHeader]
     requestedFetchPoints =
       Map.fromListWith (flip (++))
         [ (peer, map blockPoint (AnchoredFragment.toOldestFirst fragment))
@@ -259,7 +261,7 @@ tracePropertyBlocksRequestedAndRecievedPerPeer fork1 fork2 es =
         , fragment <- fragments
         ]
 
-    receivedFetchPoints :: Map Int [Point BlockHeader]
+    receivedFetchPoints :: Map (ConnectionId Int) [Point BlockHeader]
     receivedFetchPoints =
       Map.fromListWith (flip (++))
         [ (peer, [pt])
@@ -333,17 +335,18 @@ tracePropertyNoDuplicateBlocksBetweenPeers fork1 fork2 es =
 
     Set.null $
 
-    Map.findWithDefault Set.empty 1 requestedFetchPoints
+    Map.findWithDefault Set.empty (ConnectionId local 1) requestedFetchPoints
       `Set.intersection`
-    Map.findWithDefault Set.empty 2 requestedFetchPoints
+    Map.findWithDefault Set.empty (ConnectionId local 2) requestedFetchPoints
 
   where
+    local = 0
     hasDupes = not . null . filter ((>1) . length)  . group . sort
 
     requiredFetchPoints =
       nub (chainPoints fork1 ++ chainPoints fork2)
 
-    requestedFetchPoints :: Map Int (Set (Point BlockHeader))
+    requestedFetchPoints :: Map (ConnectionId Int) (Set (Point BlockHeader))
     requestedFetchPoints =
       Map.fromListWith Set.union
         [ (peer, points fragment)
@@ -401,7 +404,7 @@ data FetchRequestTrace
     | RejectedFetchBatchTrace
   deriving Show
 
-fetchRequestTrace :: [Example1TraceEvent] -> [TraceLabelPeer Int FetchRequestTrace]
+fetchRequestTrace :: [Example1TraceEvent] -> [TraceLabelPeer (ConnectionId Int) FetchRequestTrace]
 fetchRequestTrace = mapMaybe f
   where
     f (TraceFetchClientState (TraceLabelPeer peerid (AddedFetchRequest request inflight _ _))) =
