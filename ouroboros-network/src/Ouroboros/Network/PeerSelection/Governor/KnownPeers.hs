@@ -27,6 +27,7 @@ import           Ouroboros.Network.PeerSelection.LedgerPeers (LedgerPeer (..))
 import qualified Ouroboros.Network.PeerSelection.LocalRootPeers as LocalRootPeers
 import           Ouroboros.Network.PeerSelection.Types (PeerAdvertise (..),
                      PeerSharing (..))
+import           Ouroboros.Network.Protocol.PeerSharing.Type (PeerSharingAmount)
 
 
 ---------------------------
@@ -77,6 +78,12 @@ belowTarget actions
                              canAsk
                              numPeerShareReqsPossible
       let numPeerShareReqs = Set.size selectedForPeerShare
+          numPeersToReq    = (targetNumberOfKnownPeers - numKnownPeers)
+                             `div`
+                             numPeerShareReqs
+          selForPSWithAmount = Set.toList
+                             $ Set.map (\a -> (fromIntegral numPeersToReq, a))
+                                       selectedForPeerShare
       return $ \now -> Decision {
         decisionTrace = TracePeerShareRequests
                           targetNumberOfKnownPeers
@@ -91,8 +98,7 @@ belowTarget actions
                                               (addTime policyPeerShareRetryTime now)
                                               establishedPeers
                         },
-        decisionJobs  = [jobPeerShare actions policy
-                           (Set.toList selectedForPeerShare)]
+        decisionJobs  = [jobPeerShare actions policy selForPSWithAmount]
       }
 
     -- If we could peer share except that there are none currently available
@@ -118,11 +124,11 @@ jobPeerShare :: forall m peeraddr peerconn.
              (MonadAsync m, MonadTimer m, Ord peeraddr)
              => PeerSelectionActions peeraddr peerconn m
              -> PeerSelectionPolicy peeraddr m
-             -> [peeraddr]
+             -> [(PeerSharingAmount, peeraddr)]
              -> Job () m (Completion m peeraddr peerconn)
 jobPeerShare PeerSelectionActions{requestPeerShare}
              PeerSelectionPolicy{..} =
-    \peers -> Job (jobPhase1 peers) (handler peers) () "peerSharePhase1"
+    \peers -> Job (jobPhase1 peers) (handler (map snd peers)) () "peerSharePhase1"
   where
     handler :: [peeraddr] -> SomeException -> m (Completion m peeraddr peerconn)
     handler peers e = return $
@@ -135,14 +141,15 @@ jobPeerShare PeerSelectionActions{requestPeerShare}
                , decisionJobs  = []
                }
 
-    jobPhase1 :: [peeraddr] -> m (Completion m peeraddr peerconn)
+    jobPhase1 :: [(PeerSharingAmount, peeraddr)] -> m (Completion m peeraddr peerconn)
     jobPhase1 peers = do
       -- In the typical case, where most requests return within a short
       -- timeout we want to collect all the responses into a batch and
       -- add them to the known peers set in one go.
       --
       -- So fire them all off in one go:
-      peerShares <- sequence [ async (requestPeerShare peer) | peer <- peers ]
+      peerShares <- sequence [ async (requestPeerShare amount peer)
+                             | (amount, peer) <- peers ]
 
       -- First to finish synchronisation between /all/ the peer share requests
       -- completing or the timeout (with whatever partial results we have at
@@ -151,7 +158,7 @@ jobPeerShare PeerSelectionActions{requestPeerShare}
       case results of
         Right totalResults ->
           return $ Completion $ \st _ ->
-           let peerResults = zip peers totalResults
+           let peerResults = zip (map snd peers) totalResults
                -- Filter known-to-be ledger peers before adding them to known
                -- peers
                newPeers    = [ p | Right ps <- totalResults
@@ -182,9 +189,9 @@ jobPeerShare PeerSelectionActions{requestPeerShare}
           -- We have to keep track of the relationship between the peer
           -- addresses and the peer share requests, completed and still in progress:
           let peerResults      = [ (p, r)
-                                 | (p, Just r)  <- zip peers   partialResults ]
+                                 | ((_, p), Just r)  <- zip peers partialResults ]
               peersRemaining   = [  p
-                                 | (p, Nothing) <- zip peers   partialResults ]
+                                 | ((_, p), Nothing) <- zip peers partialResults ]
               peerSharesRemaining = [  a
                                  | (a, Nothing) <- zip peerShares partialResults ]
 

@@ -81,6 +81,8 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import           Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
+import           Ouroboros.Network.PeerSharing (PeerSharingRegistry,
+                     newPeerSharingRegistry)
 
 {-------------------------------------------------------------------------------
   Relay node
@@ -107,6 +109,10 @@ data NodeKernel m addrNTN localPeer blk = NodeKernel {
       -- | Read the current candidates
     , getNodeCandidates      :: StrictTVar m (Map (ConnectionId addrNTN) (StrictTVar m (AnchoredFragment (Header blk))))
 
+      -- | Read the current peer sharing registry, used for interacting with
+      -- the PeerSharing protocol
+    , getPeerSharingRegistry :: PeerSharingRegistry addrNTN m
+
       -- | The node's tracers
     , getTracers             :: Tracers m (ConnectionId addrNTN) localPeer blk
     }
@@ -131,9 +137,9 @@ initNodeKernel
     :: forall m addrNTN localPeer blk.
        ( IOLike m
        , RunNode blk
-       , Typeable addrNTN
        , Ord addrNTN
        , Hashable addrNTN
+       , Typeable addrNTN
        )
     => NodeKernelArgs m addrNTN localPeer blk
     -> m (NodeKernel m addrNTN localPeer blk)
@@ -149,7 +155,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
     mapM_ (forkBlockForging st) blockForging
 
     let IS { blockFetchInterface, fetchClientRegistry, varCandidates,
-             mempool } = st
+             peerSharingRegistry, mempool } = st
 
     -- Run the block fetch logic in the background. This will call
     -- 'addFetchedBlock' whenever a new block is downloaded.
@@ -168,6 +174,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
       , getFetchClientRegistry = fetchClientRegistry
       , getFetchMode           = readFetchMode blockFetchInterface
       , getNodeCandidates      = varCandidates
+      , getPeerSharingRegistry = peerSharingRegistry
       , getTracers             = tracers
       }
 
@@ -184,6 +191,7 @@ data InternalState m addrNTN localPeer blk = IS {
     , blockFetchInterface :: BlockFetchConsensusInterface (ConnectionId addrNTN) (Header blk) blk m
     , fetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (Header blk) blk m
     , varCandidates       :: StrictTVar m (Map (ConnectionId addrNTN) (StrictTVar m (AnchoredFragment (Header blk))))
+    , peerSharingRegistry :: PeerSharingRegistry addrNTN m
     , mempool             :: Mempool m blk TicketNo
     }
 
@@ -226,6 +234,8 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
           blockFetchSize
           slotForgeTimeOracle
           readFetchMode
+
+    peerSharingRegistry <- newPeerSharingRegistry
 
     return IS {..}
 

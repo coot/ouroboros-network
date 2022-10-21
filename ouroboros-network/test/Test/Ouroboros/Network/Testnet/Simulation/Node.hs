@@ -92,6 +92,9 @@ import qualified Test.Ouroboros.Network.PeerSelection.RootPeersDNS as PeerSelect
 import           Test.Ouroboros.Network.PeerSelection.RootPeersDNS
                      (DNSLookupDelay (..), DNSTimeout (..))
 
+import           Control.Monad.Class.MonadMVar (MonadMVar)
+import           Ouroboros.Network.Protocol.PeerSharing.Codec
+                     (byteLimitsPeerSharing, timeLimitsPeerSharing)
 import           Test.QuickCheck (Arbitrary (..), Gen, Property, choose,
                      chooseInt, counterexample, frequency, oneof, property,
                      shrinkList, sized, sublistOf, suchThat, vectorOf, (.&&.))
@@ -575,6 +578,7 @@ diffusionSimulation
                , MonadTime        m
                , MonadTimer       m
                , MonadThrow  (STM m)
+               , MonadMVar        m
                , Eq (Async m Void)
                , forall a. Semigroup a => Semigroup (m a)
                )
@@ -774,10 +778,16 @@ diffusionSimulation
                     ProtocolTimeLimits (const (Just 60))
                 , NodeKernel.handshakeLimits      = defaultMiniProtocolsLimit
                 , NodeKernel.handshakeTimeLimits  =
+                    ProtocolTimeLimits (const shortWait)
+                , NodeKernel.handhsakeSizeLimits  =
                     ProtocolSizeLimits (const (4 * 1440))
                                        (fromIntegral . BL.length)
-                , NodeKernel.handhsakeSizeLimits  =
-                    ProtocolTimeLimits (const shortWait)
+                , NodeKernel.peerSharingLimits     = defaultMiniProtocolsLimit
+                , NodeKernel.peerSharingTimeLimits =
+                    timeLimitsPeerSharing
+                , NodeKernel.peerSharingSizeLimits =
+                    byteLimitsPeerSharing (const 0)
+
                 }
 
           interfaces :: NodeKernel.Interfaces m

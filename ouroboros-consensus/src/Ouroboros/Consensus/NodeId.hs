@@ -3,6 +3,7 @@
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE StandaloneDeriving         #-}
 
 module Ouroboros.Consensus.NodeId (
     -- * Node IDs
@@ -19,6 +20,7 @@ import           NoThunks.Class (NoThunks)
 import           Quiet
 
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
+import           Ouroboros.Network.Util.ShowProxy (ShowProxy (..))
 
 {-------------------------------------------------------------------------------
   Node IDs
@@ -45,6 +47,11 @@ newtype CoreNodeId = CoreNodeId {
   deriving Show via Quiet CoreNodeId
 
 instance Hashable CoreNodeId
+
+instance ShowProxy NodeId where
+  showProxy _ = "NodeId"
+
+deriving instance Serialise NodeId
 
 fromCoreNodeId :: CoreNodeId -> NodeId
 fromCoreNodeId = CoreId

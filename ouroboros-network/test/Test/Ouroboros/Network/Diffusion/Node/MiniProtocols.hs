@@ -81,23 +81,35 @@ import           Network.TypedProtocol
 
 import qualified Pipes
 
+import           Control.Monad.Class.MonadMVar (MonadMVar)
+import           Ouroboros.Network.PeerSharing (bracketPeerSharingClient,
+                     peerSharingClient, peerSharingServer)
+import           Ouroboros.Network.Protocol.PeerSharing.Client
+                     (peerSharingClientPeer)
+import           Ouroboros.Network.Protocol.PeerSharing.Codec (codecPeerSharing)
+import           Ouroboros.Network.Protocol.PeerSharing.Server
+                     (peerSharingServerPeer)
+import           Ouroboros.Network.Protocol.PeerSharing.Type (PeerSharing,
+                     PeerSharingAmount)
 import           Test.Ouroboros.Network.Diffusion.Node.NodeKernel
 
 
 -- | Protocol codecs.
 --
-data Codecs block m = Codecs
-  { chainSyncCodec  :: Codec (ChainSync block (Point block) (Tip block))
-                         CBOR.DeserialiseFailure m ByteString
-  , blockFetchCodec :: Codec (BlockFetch block (Point block))
-                         CBOR.DeserialiseFailure m ByteString
-  , keepAliveCodec  :: Codec KeepAlive
-                         CBOR.DeserialiseFailure m ByteString
-  , pingPongCodec   :: Codec PingPong
+data Codecs addr block m = Codecs
+  { chainSyncCodec   :: Codec (ChainSync block (Point block) (Tip block))
+                          CBOR.DeserialiseFailure m ByteString
+  , blockFetchCodec  :: Codec (BlockFetch block (Point block))
+                          CBOR.DeserialiseFailure m ByteString
+  , keepAliveCodec   :: Codec KeepAlive
+                          CBOR.DeserialiseFailure m ByteString
+  , pingPongCodec    :: Codec PingPong
+                          CBOR.DeserialiseFailure m ByteString
+  , peerSharingCodec :: Codec (PeerSharing addr)
                          CBOR.DeserialiseFailure m ByteString
   }
 
-cborCodecs :: MonadST m => Codecs Block m
+cborCodecs :: MonadST m => Codecs NtNAddr Block m
 cborCodecs = Codecs
   { chainSyncCodec = codecChainSync Serialise.encode Serialise.decode
                                     Serialise.encode Serialise.decode
@@ -107,6 +119,7 @@ cborCodecs = Codecs
                                       Serialise.encode Serialise.decode
   , keepAliveCodec = codecKeepAlive_v2
   , pingPongCodec  = codecPingPong
+  , peerSharingCodec  = codecPeerSharing
   }
 
 
@@ -149,9 +162,17 @@ data LimitsAndTimeouts block = LimitsAndTimeouts
   , handshakeLimits
       :: MiniProtocolLimits
   , handshakeTimeLimits
-      :: ProtocolSizeLimits (Handshake NtNVersion NtNVersionData) ByteString
-  , handhsakeSizeLimits
       :: ProtocolTimeLimits (Handshake NtNVersion NtNVersionData)
+  , handhsakeSizeLimits
+      :: ProtocolSizeLimits (Handshake NtNVersion NtNVersionData) ByteString
+
+    -- peer sharing
+  , peerSharingLimits
+      :: MiniProtocolLimits
+  , peerSharingTimeLimits
+      :: ProtocolTimeLimits (PeerSharing NtNAddr)
+  , peerSharingSizeLimits
+      :: ProtocolSizeLimits (PeerSharing NtNAddr) ByteString
   }
 
 
@@ -181,13 +202,14 @@ applications :: forall block header m.
                 , MonadTime  m
                 , MonadTimer m
                 , MonadThrow (STM m)
+                , MonadMVar  m
                 , HasHeader header
                 , HasHeader block
                 , HeaderHash header ~ HeaderHash block
                 , ShowProxy block
                 )
              => NodeKernel header block m
-             -> Codecs block m
+             -> Codecs NtNAddr block m
              -> LimitsAndTimeouts block
              -> AppArgs m
              -> m (Diff.Applications NtNAddr NtNVersion NtNVersionData
@@ -195,7 +217,9 @@ applications :: forall block header m.
                                      m ())
 applications nodeKernel
              Codecs { chainSyncCodec, blockFetchCodec
-                    , keepAliveCodec, pingPongCodec }
+                    , keepAliveCodec, pingPongCodec
+                    , peerSharingCodec
+                    }
              limits
              AppArgs
                { aaLedgerPeersConsensusInterface
@@ -210,10 +234,10 @@ applications nodeKernel
           simpleSingletonVersions UnversionedProtocol
                                   (NtNVersionData InitiatorOnlyDiffusionMode)
                                   initiatorApp
-      , Diff.daApplicationInitiatorResponderMode =
+      , Diff.daApplicationInitiatorResponderMode = \f ->
           simpleSingletonVersions UnversionedProtocol
                                   (NtNVersionData aaDiffusionMode)
-                                  initiatorAndResponderApp
+                                  (initiatorAndResponderApp f)
       , Diff.daLocalResponderApplication =
           simpleSingletonVersions UnversionedProtocol
                                   UnversionedProtocolData
@@ -225,7 +249,7 @@ applications nodeKernel
     -- TODO: initiator app can be derived from 'initiatorAndResponderApp'
     initiatorApp
       :: OuroborosBundle InitiatorMode NtNAddr ByteString m () Void
-    initiatorApp = (fmap (fmap (fmap f))) <$> initiatorAndResponderApp
+    initiatorApp = (fmap (fmap (fmap f))) <$> initiatorAndResponderApp (\_ -> return [])
       where
         f :: MiniProtocol InitiatorResponderMode ByteString m () ()
           -> MiniProtocol InitiatorMode          ByteString m () Void
@@ -241,8 +265,9 @@ applications nodeKernel
                        }
 
     initiatorAndResponderApp
-      :: OuroborosBundle InitiatorResponderMode NtNAddr ByteString m () ()
-    initiatorAndResponderApp = TemperatureBundle
+      :: (PeerSharingAmount -> m [NtNAddr])
+      -> OuroborosBundle InitiatorResponderMode NtNAddr ByteString m () ()
+    initiatorAndResponderApp computePeers = TemperatureBundle
       { withHot = WithHot $ \ connId controlMessageSTM ->
           [ MiniProtocol
               { miniProtocolNum    = MiniProtocolNum 2
@@ -279,6 +304,14 @@ applications nodeKernel
                   InitiatorAndResponderProtocol
                     (keepAliveInitiator connId controlMessageSTM)
                     keepAliveResponder
+              }
+          , MiniProtocol
+              { miniProtocolNum    = MiniProtocolNum 12
+              , miniProtocolLimits = peerSharingLimits limits
+              , miniProtocolRun    =
+                  InitiatorAndResponderProtocol
+                    (peerSharingInitiator controlMessageSTM (remoteAddress connId))
+                    (peerSharingResponder computePeers)
               }
           ]
       }
@@ -461,6 +494,37 @@ applications nodeKernel
         channel
         (pingPongServerPeer pingPongServerStandard)
 
+
+    peerSharingInitiator
+      :: ControlMessageSTM m
+      -> NtNAddr
+      -> MuxPeer ByteString m ()
+    peerSharingInitiator _controlMessageSTM them = MuxPeerRaw $ \channel -> do
+      labelThisThread "PeerSharingClient"
+      bracketPeerSharingClient (nkPeerSharingRegistry nodeKernel) them
+        $ \controller -> do
+          psClient <- peerSharingClient controller
+          runPeerWithLimits
+            nullTracer
+            peerSharingCodec
+            (peerSharingSizeLimits limits)
+            (peerSharingTimeLimits limits)
+            channel
+            (peerSharingClientPeer psClient)
+
+    peerSharingResponder
+      :: (PeerSharingAmount -> m [NtNAddr])
+      -> MuxPeer ByteString m ()
+    peerSharingResponder f = MuxPeerRaw $ \channel -> do
+      labelThisThread "PeerSharingServer"
+      runPeerWithLimits
+        nullTracer
+        peerSharingCodec
+        (peerSharingSizeLimits limits)
+        (peerSharingTimeLimits limits)
+        channel
+        $ peerSharingServerPeer
+        $ peerSharingServer f
 
 
 --

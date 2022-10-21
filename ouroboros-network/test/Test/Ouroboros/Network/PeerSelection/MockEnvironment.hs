@@ -38,6 +38,7 @@ import           Data.Void (Void)
 import           System.Random (mkStdGen)
 
 import           Control.Concurrent.Class.MonadSTM
+import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictTVar
 import           Control.Exception (throw)
 import           Control.Monad.Class.MonadAsync
 import           Control.Monad.Class.MonadFork
@@ -181,6 +182,7 @@ runGovernorInMockEnvironment mockEnv =
 
 governorAction :: GovernorMockEnvironment -> IOSim s Void
 governorAction mockEnv = do
+    publicStateVar <- StrictTVar.newTVarIO emptyPublicPeerSelectionState
     policy  <- mockPeerSelectionPolicy                mockEnv
     actions <- mockPeerSelectionActions tracerMockEnv mockEnv policy
     exploreRaces      -- explore races within the governor
@@ -190,6 +192,7 @@ governorAction mockEnv = do
         tracerDebugPeerSelection
         tracerTracePeerSelectionCounters
         (mkStdGen 42)
+        publicStateVar
         actions
         policy
       atomically retry
@@ -325,7 +328,7 @@ mockPeerSelectionActions' tracer
       traceWith tracer (TraceEnvRootsResult (Map.keys publicRootPeers))
       return (publicRootPeers, ttl)
 
-    requestPeerShare addr = do
+    requestPeerShare _ addr = do
       let Just (peerShareScript, _, _) = Map.lookup addr scripts
       mPeerShare <- stepScript peerShareScript
       traceWith tracer (TraceEnvPeerShareRequest addr mPeerShare)

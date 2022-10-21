@@ -7,6 +7,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies        #-}
 
+{-# OPTIONS_GHC -Wno-orphans #-}
+
 -- | This is the starting point for a module that will bring together the
 -- overall node to node protocol, as a collection of mini-protocols.
 --
@@ -94,6 +96,7 @@ module Ouroboros.Network.NodeToNode
   , blockFetchMiniProtocolNum
   , txSubmissionMiniProtocolNum
   , keepAliveMiniProtocolNum
+  , peerSharingMiniProtocolNum
   ) where
 
 import qualified Control.Concurrent.Async as Async
@@ -109,11 +112,13 @@ import           Data.Void (Void)
 import           Data.Word
 import           Network.Mux (WithMuxBearer (..))
 import           Network.Mux.Types (MuxRuntimeError (..))
-import           Network.Socket (Socket)
+import           Network.Socket (SockAddr (..), Socket)
 import qualified Network.Socket as Socket
 
-import           Network.TypedProtocol.Codec.CBOR
+import           Network.TypedProtocol.Codec.CBOR hiding (decode, encode)
 
+import qualified Cardano.Binary as CBOR
+import           Codec.Serialise.Class (Serialise (..))
 import           Ouroboros.Network.BlockFetch.Client (BlockFetchProtocolFailure)
 import           Ouroboros.Network.ConnectionManager.Types
                      (ExceptionInHandler (..))
@@ -147,6 +152,7 @@ import           Ouroboros.Network.Subscription.Worker (LocalAddresses (..),
 import           Ouroboros.Network.Tracers
 import qualified Ouroboros.Network.TxSubmission.Inbound as TxInbound
 import qualified Ouroboros.Network.TxSubmission.Outbound as TxOutbound
+import           Ouroboros.Network.Util.ShowProxy (ShowProxy (..))
 
 
 -- The Handshake tracer types are simply terrible.
@@ -177,7 +183,11 @@ data NodeToNodeProtocols appType bytes m a b = NodeToNodeProtocols {
 
     -- | keep-alive mini-protocol
     --
-    keepAliveProtocol    :: RunMiniProtocol appType bytes m a b
+    keepAliveProtocol    :: RunMiniProtocol appType bytes m a b,
+
+    -- | peer sharing mini-protocol
+    --
+    peerSharingProtocol  :: RunMiniProtocol appType bytes m a b
 
   }
 
@@ -268,11 +278,16 @@ nodeToNodeProtocols miniProtocolParameters protocols _version =
       -- Established protocols: 'keep-alive'.
       (WithEstablished $ \connectionId controlMessageSTM ->
         case protocols connectionId controlMessageSTM of
-          NodeToNodeProtocols { keepAliveProtocol } ->
+          NodeToNodeProtocols { keepAliveProtocol, peerSharingProtocol } ->
             [ MiniProtocol {
                 miniProtocolNum    = MiniProtocolNum 8,
                 miniProtocolLimits = keepAliveProtocolLimits miniProtocolParameters,
                 miniProtocolRun    = keepAliveProtocol
+              }
+            , MiniProtocol {
+                miniProtocolNum    = MiniProtocolNum 12,
+                miniProtocolLimits = peerSharingProtocolLimits miniProtocolParameters,
+                miniProtocolRun    = peerSharingProtocol
               }
             ])
 
@@ -282,7 +297,8 @@ addSafetyMargin x = x + x `div` 10
 chainSyncProtocolLimits
   , blockFetchProtocolLimits
   , txSubmissionProtocolLimits
-  , keepAliveProtocolLimits :: MiniProtocolParameters -> MiniProtocolLimits
+  , keepAliveProtocolLimits
+  , peerSharingProtocolLimits :: MiniProtocolParameters -> MiniProtocolLimits
 
 chainSyncProtocolLimits MiniProtocolParameters { chainSyncPipeliningHighMark } =
   MiniProtocolLimits {
@@ -388,6 +404,17 @@ keepAliveProtocolLimits _ =
       maximumIngressQueue = addSafetyMargin 1280
     }
 
+peerSharingProtocolLimits _ =
+  MiniProtocolLimits {
+  -- This protocol does not need to be pipelined and a peer can only ask
+  -- for a maximum of 255 peers each time. Hence a reply can have up to
+  -- 255 IP (IPv4 or IPv6) addresses so 255 * 16 = 4080. TCP has an initial
+  -- window size of 4 and a TCP segment is 1440, which gives us 4 * 1440 =
+  -- 5760 bytes to fit into a single RTT. So setting the maximum ingress
+  -- queue to be a single RTT should be enough to cover for CBOR overhead.
+  maximumIngressQueue = 4 * 1440
+  }
+
 chainSyncMiniProtocolNum :: MiniProtocolNum
 chainSyncMiniProtocolNum = MiniProtocolNum 2
 
@@ -399,6 +426,9 @@ txSubmissionMiniProtocolNum = MiniProtocolNum 4
 
 keepAliveMiniProtocolNum :: MiniProtocolNum
 keepAliveMiniProtocolNum = MiniProtocolNum 8
+
+peerSharingMiniProtocolNum :: MiniProtocolNum
+peerSharingMiniProtocolNum = MiniProtocolNum 12
 
 -- | A specialised version of @'Ouroboros.Network.Socket.connectToNode'@.
 --
@@ -687,4 +717,44 @@ localNetworkErrorPolicy = ErrorPolicies {
     }
 
 type RemoteAddress      = Socket.SockAddr
+
+instance ShowProxy RemoteAddress where
+  showProxy _ = "SockAddr"
+
+instance Serialise RemoteAddress where
+  encode (SockAddrInet pn wo)         =
+      CBOR.encodeListLen 3
+    <> CBOR.encodeWord 0
+    <> CBOR.encodeWord16 (fromIntegral pn)
+    <> encode wo
+  encode (SockAddrInet6 pn wo x1 wo') =
+      CBOR.encodeListLen 5
+    <> CBOR.encodeWord 1
+    <> CBOR.encodeWord16 (fromIntegral pn)
+    <> encode wo
+    <> encode x1
+    <> encode wo'
+  encode (SockAddrUnix s)             =
+      CBOR.encodeListLen 2
+    <> CBOR.encodeWord 2
+    <> encode s
+  decode = do
+    _ <- CBOR.decodeListLen
+    key <- CBOR.decodeWord
+    case key of
+      0 -> do
+        pn <- CBOR.decodeWord16
+        wo <- decode
+        return (SockAddrInet (fromIntegral pn) wo)
+      1 -> do
+        pn <- CBOR.decodeWord16
+        wo <- decode
+        x1 <- decode
+        wo' <- decode
+        return (SockAddrInet6 (fromIntegral pn) wo x1 wo')
+      2 -> do
+        s <- decode
+        return (SockAddrUnix s)
+      _ -> fail ("decode.RemoteAddress: unexpected key: " ++ show key)
+
 type RemoteConnectionId = ConnectionId RemoteAddress

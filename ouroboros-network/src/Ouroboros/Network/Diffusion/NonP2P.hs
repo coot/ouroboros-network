@@ -443,7 +443,12 @@ run Tracers
             networkState
             daAcceptedConnectionsLimit
             sd
-            (mkResponderApp <$> daApplicationInitiatorResponderMode applications)
+            -- NonP2P does not use Peer Sharing so the callback is set to return
+            -- []. Should the callback be 'undefined' or error if called in this
+            -- case?
+            (mkResponderApp
+              <$> daApplicationInitiatorResponderMode applications
+                                                      (\_ -> return []))
             remoteErrorPolicy
         )
     runIpSubscriptionWorker :: SocketSnocket

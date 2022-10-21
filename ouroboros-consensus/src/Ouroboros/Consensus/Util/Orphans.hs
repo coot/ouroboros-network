@@ -14,7 +14,7 @@
 module Ouroboros.Consensus.Util.Orphans () where
 
 import           Codec.CBOR.Decoding (Decoder)
-import           Codec.Serialise (Serialise (..))
+import           Codec.Serialise.Class (Serialise (..))
 import           Data.Bimap (Bimap)
 import qualified Data.Bimap as Bimap
 import           Data.IntPSQ (IntPSQ)
@@ -39,6 +39,7 @@ import           Ouroboros.Network.MockChain.Chain (Chain (..))
 
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Util.Condense
+import           Ouroboros.Network.ConnectionId (ConnectionId)
 import           Ouroboros.Network.Util.ShowProxy
 
 {-------------------------------------------------------------------------------
@@ -67,6 +68,8 @@ instance Serialise (Hash h a) where
 instance Serialise (VerKeyDSIGN MockDSIGN) where
   encode = encodeVerKeyDSIGN
   decode = decodeVerKeyDSIGN
+
+deriving instance Serialise addr => Serialise (ConnectionId addr)
 
 {-------------------------------------------------------------------------------
   ShowProxy

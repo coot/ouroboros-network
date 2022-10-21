@@ -70,7 +70,10 @@ import           Simulation.Network.Snocket (AddressType (..),
 
 import           Test.Ouroboros.Network.Orphans ()
 
+import           Codec.Serialise.Class (Serialise)
 import           Ouroboros.Network.ConnectionId (ConnectionId)
+import           Ouroboros.Network.PeerSharing (PeerSharingRegistry,
+                     newPeerSharingRegistry)
 import           Test.QuickCheck (Arbitrary (..), choose, chooseInt, frequency,
                      oneof)
 
@@ -111,6 +114,8 @@ instance GlobalAddressScheme NtNAddr_ where
     ephemeralAddress IPv6Address = TestAddress . EphemeralIPv6Addr
 
 instance Hashable NtNAddr_
+
+instance Serialise NtNAddr_
 
 type NtNAddr        = TestAddress NtNAddr_
 type NtNVersion     = UnversionedProtocol
@@ -176,7 +181,9 @@ data NodeKernel header block m = NodeKernel {
       nkChainProducerState
         :: StrictTVar m (ChainProducerState block),
 
-      nkFetchClientRegistry :: FetchClientRegistry NtNAddr header block m
+      nkFetchClientRegistry :: FetchClientRegistry NtNAddr header block m,
+
+      nkPeerSharingRegistry :: PeerSharingRegistry NtNAddr m
     }
 
 newNodeKernel :: MonadSTM m => m (NodeKernel header block m)
@@ -184,6 +191,7 @@ newNodeKernel = NodeKernel
             <$> newTVarIO Map.empty
             <*> newTVarIO (ChainProducerState Chain.Genesis Map.empty 0)
             <*> newFetchClientRegistry
+            <*> newPeerSharingRegistry
 
 -- | Register a new upstream chain-sync client.
 --

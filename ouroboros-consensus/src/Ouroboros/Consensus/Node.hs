@@ -51,7 +51,7 @@ module Ouroboros.Consensus.Node (
   , openChainDB
   ) where
 
-import           Codec.Serialise (DeserialiseFailure)
+import           Codec.Serialise (DeserialiseFailure, Serialise)
 import           Control.Tracer (Tracer, contramap, traceWith)
 import           Data.ByteString.Lazy (ByteString)
 import           Data.Hashable (Hashable)
@@ -111,6 +111,7 @@ import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
 
+import           Control.Monad.Class.MonadMVar (MonadMVar)
 import           Ouroboros.Consensus.Storage.ChainDB (ChainDB, ChainDbArgs)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import           Ouroboros.Consensus.Storage.FS.API (SomeHasFS (..))
@@ -123,6 +124,7 @@ import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
 import           Ouroboros.Consensus.Storage.VolatileDB
                      (BlockValidationPolicy (..))
 import           Ouroboros.Network.PeerSelection.Types (PeerSharing)
+import           Ouroboros.Network.Protocol.PeerSharing.Type (PeerSharingAmount)
 
 {-------------------------------------------------------------------------------
   The arguments to the Consensus Layer node functionality
@@ -280,8 +282,9 @@ run args stdArgs = stdLowLevelRunNodeArgsIO args stdArgs >>= runWith args
 -- This function runs forever unless an exception is thrown.
 runWith :: forall m addrNTN addrNTC versionDataNTN versionDataNTC blk p2p.
      ( RunNode blk
-     , IOLike m, MonadTime m, MonadTimer m
+     , IOLike m, MonadTime m, MonadTimer m, MonadMVar m
      , Hashable addrNTN, Ord addrNTN, Show addrNTN, Typeable addrNTN
+     , Serialise addrNTN
      )
   => RunNodeArgs m addrNTN addrNTC blk p2p
   -> LowLevelRunNodeArgs m addrNTN addrNTC versionDataNTN versionDataNTC blk p2p
@@ -392,15 +395,17 @@ runWith RunNodeArgs{..} LowLevelRunNodeArgs{..} =
       -> NodeKernel     m addrNTN (ConnectionId addrNTC) blk
       -> PeerMetrics m addrNTN
       -> BlockNodeToNodeVersion blk
+      -> (PeerSharingAmount -> m [addrNTN])
       -> NTN.Apps m
           addrNTN
           ByteString
           ByteString
           ByteString
           ByteString
+          ByteString
           NodeToNodeInitiatorResult
           ()
-    mkNodeToNodeApps nodeKernelArgs nodeKernel peerMetrics version =
+    mkNodeToNodeApps nodeKernelArgs nodeKernel peerMetrics version f =
         NTN.mkApps
           nodeKernel
           rnTraceNTN
@@ -408,7 +413,7 @@ runWith RunNodeArgs{..} LowLevelRunNodeArgs{..} =
           NTN.byteLimits
           llrnChainSyncTimeout
           (reportMetric Diffusion.peerMetricsConfiguration peerMetrics)
-          (NTN.mkHandlers nodeKernelArgs nodeKernel)
+          (NTN.mkHandlers nodeKernelArgs nodeKernel f)
 
     mkNodeToClientApps
       :: NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk
@@ -427,9 +432,11 @@ runWith RunNodeArgs{..} LowLevelRunNodeArgs{..} =
       :: NetworkP2PMode p2p
       -> MiniProtocolParameters
       -> (   BlockNodeToNodeVersion blk
+          -> (PeerSharingAmount -> m [addrNTN])
           -> NTN.Apps
                m
                addrNTN
+               ByteString
                ByteString
                ByteString
                ByteString
@@ -466,7 +473,8 @@ runWith RunNodeArgs{..} LowLevelRunNodeArgs{..} =
                 P2P.daReturnPolicy           = returnPolicy,
                 P2P.daLocalRethrowPolicy     = localRethrowPolicy,
                 P2P.daPeerMetrics            = peerMetrics,
-                P2P.daBlockFetchMode         = getFetchMode kernel
+                P2P.daBlockFetchMode         = getFetchMode kernel,
+                P2P.daPeerSharingRegistry    = getPeerSharingRegistry kernel
               }
           )
         DisabledP2PMode ->
@@ -484,16 +492,20 @@ runWith RunNodeArgs{..} LowLevelRunNodeArgs{..} =
                     version
                     llrnVersionDataNTN
                     (NTN.initiator miniProtocolParams version
-                      $ ntnApps blockVersion)
+                      -- Initiator side won't start responder side of Peer
+                      -- Sharing protocol so we give a dummy implementation
+                      -- here. Should we make the function error on use or be
+                      -- 'undefined' ?
+                      $ ntnApps blockVersion (\_ -> return []))
                 | (version, blockVersion) <- Map.toList llrnNodeToNodeVersions
                 ],
-            Diffusion.daApplicationInitiatorResponderMode =
+            Diffusion.daApplicationInitiatorResponderMode = \f ->
               combineVersions
                 [ simpleSingletonVersions
                     version
                     llrnVersionDataNTN
                     (NTN.initiatorAndResponder miniProtocolParams version
-                      $ ntnApps blockVersion)
+                      $ ntnApps blockVersion f)
                 | (version, blockVersion) <- Map.toList llrnNodeToNodeVersions
                 ],
             Diffusion.daLocalResponderApplication =

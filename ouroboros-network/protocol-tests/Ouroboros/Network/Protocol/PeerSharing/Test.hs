@@ -135,7 +135,7 @@ prop_channel_IO l =
 
 instance Arbitrary peer => Arbitrary (AnyMessageAndAgency (PeerSharing peer)) where
   arbitrary = do
-    amount <- arbitrary
+    amount <- PeerSharingAmount <$> arbitrary
     resp <- arbitrary
     oneof
       [ pure $ AnyMessageAndAgency (ClientAgency TokIdle) (MsgShareRequest amount)

@@ -62,6 +62,7 @@ import           Network.Mux.Trace (MuxTrace)
 import           Network.Mux.Types (MuxBearer)
 
 import           Ouroboros.Network.IOManager
+import           Ouroboros.Network.Testing.Serialise (Serialise)
 
 
 -- | Named pipes and Berkeley sockets have different API when accepting
@@ -197,6 +198,8 @@ instance Show addr => Show (TestAddress addr) where
       . showParen True (showsPrec d addr)
 
 instance Hashable addr => Hashable (TestAddress addr)
+
+instance Serialise addr => Serialise (TestAddress addr)
 
 -- | We support either sockets or named pipes.
 --

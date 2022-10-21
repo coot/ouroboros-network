@@ -94,6 +94,7 @@ library
                      , filepath
                      , generics-sop
                      , graphviz
+                     , hashable
                      , mtl               >=2.2   && <2.3
                      , nothunks
                      , optparse-applicative
